@@ -1,0 +1,13 @@
+# hRango-Backend: the API, its database design and the design notes. Everything else in this folder
+# (frontend/ has its own repository; requirements, PDFs, other projects) stays out.
+/*
+!/.gitignore
+!/README.md
+!/backend/
+!/erd/
+!/comparison/
+!/HRango - ERD.md
+!/HRango - ERD.drawio
+
+.pytest_cache/
+__pycache__/

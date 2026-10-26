@@ -1,0 +1,7 @@
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+pydantic-settings==2.15.0
+pyodbc==5.3.0
+PyJWT==2.10.1
+tzdata==2026.5
+python-multipart==0.0.32

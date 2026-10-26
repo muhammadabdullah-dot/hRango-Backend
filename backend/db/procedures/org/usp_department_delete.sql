@@ -1,0 +1,28 @@
+CREATE OR ALTER PROCEDURE [org].[usp_department_delete]
+    @company_id    BIGINT,
+    @actor_user_id BIGINT = NULL,
+    @id            BIGINT,
+    @row_version   BINARY(8)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @rv BINARY(8) = (SELECT row_version FROM [org].[department] WHERE id = @id AND company_id = @company_id);
+    IF @rv IS NULL
+        THROW 50404, N'Department not found', 1;
+    IF @rv <> @row_version
+        THROW 50409, N'Someone else changed this department. Reload it and try again', 1;
+    IF EXISTS (SELECT 1 FROM [org].[department] WHERE parent_id = @id)
+        THROW 50409, N'This department has sub-departments. Move or delete them first', 1;
+    IF EXISTS (SELECT 1 FROM [hr].[employee] WHERE department_id = @id)
+        THROW 50409, N'Employees are assigned to this department. Move them first', 1;
+
+    BEGIN TRAN;
+        -- Anything else still pointing here (positions, plans, history) stops the delete with error 547.
+        DELETE [org].[department] WHERE id = @id AND company_id = @company_id;
+
+        INSERT [core].[audit_log] (company_id, entity_type, entity_id, action_name, performed_by_user_id, performed_at)
+        VALUES (@company_id, N'org.department', @id, N'delete', @actor_user_id, SYSUTCDATETIME());
+    COMMIT;
+END
