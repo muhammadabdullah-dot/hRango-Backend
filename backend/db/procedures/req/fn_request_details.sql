@@ -38,8 +38,13 @@ BEGIN
     IF @kind = N'overtime'
         RETURN (SELECT o.department_id, d.name AS department_name, o.location_id, lo.name AS location_name,
                        o.branch_id, b.name AS branch_name, o.overtime_date, o.start_time, o.end_time,
-                       o.applied_minutes, o.approved_minutes
+                       o.applied_minutes, o.approved_minutes, o.overtime_type,
+                       CAST(CASE WHEN o.bulk_id IS NULL THEN 0 ELSE 1 END AS BIT) AS is_bulk, o.bulk_id,
+                       o.overtime_policy_id, op.name AS overtime_policy_name, o.slab_min_minutes, o.slab_max_minutes,
+                       o.encashment_type, o.encashment_leave_type_id, elt.title AS encashment_leave_type_name
                 FROM [req].[req_overtime] o
+                LEFT JOIN [att].[overtime_policy] op ON op.id = o.overtime_policy_id
+                LEFT JOIN [lv].[leave_type] elt ON elt.id = o.encashment_leave_type_id
                 LEFT JOIN [org].[department] d ON d.id = o.department_id
                 LEFT JOIN [org].[location] lo ON lo.id = o.location_id
                 LEFT JOIN [org].[branch] b ON b.id = o.branch_id

@@ -140,6 +140,15 @@ never the CNIC, document numbers, salary or bank details.
   `*.view`. Until these are added, the new tabs are reachable only by those roles and by personal grants (the
   tests grant per user).
 
+## Directory summary and filters (Oct 2026, gray structure)
+
+- `GET /api/employees/summary` (`employees.directory.view`) -> `{data: {total, byGender: {male, female, other,
+  unspecified}, byStatus: {active, probation, notice, left, inactive}}}` over the same people and filters as the list
+  (`hr.usp_employee_summary`, same scope through `auth.fn_visible_employees`). Replaces counting in the browser.
+- `GET /api/employees?gender=male|female|other`; the list already had `locationId`, `areaId`, `divisionId`,
+  `jobTitleId`, `gradeId`, `employmentTypeId`, `employeeGroupId`, `lineManagerId` (now one shared filter
+  dependency for the list and the summary). Tests: `backend/tests/test_employees_extras.py`.
+
 ## Cross-module needs (recorded, not done here)
 
 - **Shared `default_roles.py`**: the grants above.

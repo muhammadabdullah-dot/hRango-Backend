@@ -14,7 +14,14 @@ SELECT t.id, t.workspace_id, t.task_list_id, l.name AS list_name, t.parent_task_
        t.time_estimate_minutes,
        ISNULL((SELECT SUM(ISNULL(te.minutes, DATEDIFF(MINUTE, te.start_at, SYSUTCDATETIME())))
                FROM [pm].[time_entry] te WHERE te.task_id = t.id), 0) AS time_tracked_minutes,
-       (SELECT SUM(a.story_points) FROM [pm].[task_assignee] a WHERE a.task_id = t.id) AS story_points_total,
+       sp.total AS story_points_total,
+       -- Story point penalty (Overdue settings): a task closed late loses penalty_percent of its points;
+       -- 0 when it was not closed late; NULL when the task has no story points.
+       CAST(CASE WHEN sp.total IS NULL THEN NULL WHEN t.is_closed_late = 1 THEN ROUND(sp.total * ISNULL(os.penalty_percent, 0) / 100.0, 2)
+                 ELSE 0 END AS DECIMAL(9, 2)) AS story_points_penalty,
+       CAST(CASE WHEN sp.total IS NULL THEN NULL WHEN t.is_closed_late = 1 THEN sp.total - ROUND(sp.total * ISNULL(os.penalty_percent, 0) / 100.0, 2)
+                 ELSE sp.total END AS DECIMAL(9, 2)) AS story_points_effective,
+       le.status AS latest_extension_status, le.new_due_date AS latest_extension_new_due_date,
        t.rating, t.url, t.recurrence, t.closed_at, t.is_closed_late, t.sort_order,
        t.cover_file_id, (SELECT sf.name FROM [core].[stored_file] sf WHERE sf.id = t.cover_file_id) AS cover_file_name,
        t.created_by AS created_by_user_id,
@@ -25,7 +32,8 @@ SELECT t.id, t.workspace_id, t.task_list_id, l.name AS list_name, t.parent_task_
         WHERE c.parent_task_id = t.id AND cs.status_group NOT IN (N'done', N'closed')) AS open_subtask_count,
        (SELECT COUNT(*) FROM [pm].[task_comment] c WHERE c.task_id = t.id) AS comment_count,
        (SELECT COUNT(*) FROM [core].[attachment] a WHERE a.company_id = t.company_id AND a.entity_type = N'pm.task'
-        AND a.entity_id = t.id) AS attachment_count,
+        AND a.entity_id = t.id)
+       + (SELECT COUNT(*) FROM [pm].[task_external_file] xf WHERE xf.task_id = t.id) AS attachment_count,
        (SELECT COUNT(*) FROM [pm].[task_dependency] d JOIN [pm].[task] o ON o.id = d.other_task_id
         JOIN [pm].[workspace_status] os ON os.id = o.status_id
         WHERE d.task_id = t.id AND d.kind = N'waiting_on' AND os.status_group NOT IN (N'done', N'closed')) AS open_dependency_count,
@@ -47,6 +55,9 @@ LEFT JOIN [pm].[task_list] l ON l.id = t.task_list_id
 LEFT JOIN [pm].[task] p ON p.id = t.parent_task_id
 LEFT JOIN [auth].[user_account] cu ON cu.id = t.created_by
 LEFT JOIN [hr].[employee] ce ON ce.id = cu.employee_id
+LEFT JOIN [pm].[workspace_overdue_setting] os ON os.workspace_id = t.workspace_id
+OUTER APPLY (SELECT SUM(a.story_points) AS total FROM [pm].[task_assignee] a WHERE a.task_id = t.id) sp
+OUTER APPLY (SELECT TOP 1 x.status, x.new_due_date FROM [pm].[task_extension] x WHERE x.task_id = t.id ORDER BY x.id DESC) le
 OUTER APPLY (
     SELECT TOP 1 c.body, NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' ') AS author_name, c.created_at
     FROM [pm].[task_comment] c JOIN [hr].[employee] e ON e.id = c.author_id

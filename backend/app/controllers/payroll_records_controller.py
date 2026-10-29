@@ -7,8 +7,10 @@ from app.core.rowversion import row_version_in
 from app.middlewares.auth import RequestContext
 from app.schemas.common import paginated
 from app.schemas.payroll_records import (AccountEntryOut, CurrentSalaryOut, FinalSettlementOut, LeaveEncashmentOut,
-                                         LeaveEncashmentRowOut, OpeningBalanceEmployeeOut, OpeningBalanceOut,
-                                         OpeningBalanceSummaryOut, SalaryRevisionOut, StatementRowOut, VoucherOut)
+                                         LeaveEncashmentPreviewOut, LeaveEncashmentRowOut, OpeningBalanceEmployeeOut,
+                                         OpeningBalanceOut, OpeningBalanceSummaryOut, SalaryRevisionEmailOut,
+                                         SalaryRevisionEmailPreviewOut, SalaryRevisionOut, StatementRowOut, VoucherOut)
+from app.services import payroll_mail_service
 from app.services import payroll_records_service as service
 
 
@@ -152,7 +154,20 @@ def import_revisions(db: Db, ctx: RequestContext, body) -> dict:
     return {"data": {"created": created, "errors": errors}}
 
 
+def revision_email_preview(db: Db, ctx: RequestContext, id: int) -> dict:
+    return {"data": SalaryRevisionEmailPreviewOut(**payroll_mail_service.revision_email_preview(db, ctx, id))}
+
+
+def send_revision_email(db: Db, ctx: RequestContext, id: int, body) -> dict:
+    row = payroll_mail_service.send_revision_email(db, ctx, id, row_version_in(body.row_version))
+    return {"data": SalaryRevisionEmailOut(**row)}
+
+
 # --------------------------------------------------------------------------- leave encashment
+
+def preview_encashment(db: Db, ctx: RequestContext, body) -> dict:
+    return {"data": [LeaveEncashmentPreviewOut(**r) for r in service.preview_encashment(db, ctx, body)]}
+
 
 def _encashment(head, rows) -> LeaveEncashmentOut:
     return out(LeaveEncashmentOut, head, employees=[LeaveEncashmentRowOut(**r) for r in rows])

@@ -2,14 +2,15 @@
 sharing. Access and workspace-role rules are in the pm procedures; nothing here sends anything."""
 import json
 import secrets
+from datetime import datetime
 from typing import Any
 
 from app.core.db import Db
 from app.core.errors import invalid
 from app.middlewares.auth import RequestContext
 from app.repos import projects_collab_repo
-from app.schemas.projects_collab import (SHARE_PROPERTIES, AttachmentIn, CommentEditIn, CommentIn, ReminderIn, ShareIn,
-                                         TimeEntryIn)
+from app.schemas.projects_collab import (SHARE_PROPERTIES, AttachmentIn, AttachmentLinkIn, CommentEditIn, CommentIn,
+                                         ReminderIn, ShareIn, TimeEntryIn)
 from app.services.projects_service import dumps, naive_utc
 
 Rows = list[dict[str, Any]]
@@ -77,6 +78,20 @@ def delete_attachment(db: Db, ctx: RequestContext, attachment_id: int) -> None:
     projects_collab_repo.delete_attachment(db, ctx.company_id, ctx.user_id, attachment_id)
 
 
+def add_attachment_link(db: Db, ctx: RequestContext, task_id: int, body: AttachmentLinkIn) -> dict[str, Any]:
+    # TODO(pm): once storage is connected (T9), check the caller's connection to body.provider and read the
+    # file's name, type and size from the provider instead of trusting the picker.
+    if not body.web_url.lower().startswith("https://"):
+        raise invalid("A link must begin with https://.", "webUrl")
+    return projects_collab_repo.add_attachment_link(db, ctx.company_id, ctx.user_id, task_id, body.provider,
+                                                    body.external_id, body.name, body.web_url, body.mime_type,
+                                                    body.size_bytes)
+
+
+def delete_attachment_link(db: Db, ctx: RequestContext, link_id: int) -> None:
+    projects_collab_repo.delete_attachment_link(db, ctx.company_id, ctx.user_id, link_id)
+
+
 # --------------------------------------------------------------------------- time
 
 def list_time_entries(db: Db, ctx: RequestContext, task_id: int) -> Rows:
@@ -122,6 +137,13 @@ def save_reminder(db: Db, ctx: RequestContext, reminder_id: int | None, body: Re
 
 def delete_reminder(db: Db, ctx: RequestContext, reminder_id: int) -> None:
     projects_collab_repo.delete_reminder(db, ctx.company_id, ctx.user_id, reminder_id)
+
+
+def deliver_due_reminders(db: Db, company_id: int | None = None, now: datetime | None = None) -> int:
+    """Sends every due reminder to its person's inbox (type projects.reminder) and marks it sent; returns how
+    many were sent. For a scheduler (the API worker or scripts/nightly.py, every few minutes). `now` is the
+    company's wall-clock time; by default each company's own (reminders are entered in local time)."""
+    return projects_collab_repo.deliver_due_reminders(db, company_id, now)
 
 
 # --------------------------------------------------------------------------- sharing

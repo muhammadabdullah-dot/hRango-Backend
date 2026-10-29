@@ -17,12 +17,17 @@ from app.schemas.common import Item, Paginated
 from app.schemas.requests import (TYPE_DETAILS, AttachmentIn, AttachmentOut, AuthorityIn, AuthorityOut,
                                   BulkDecisionIn, BulkResultOut, CancelIn, ColleagueOptionOut, ConsentIn, DecisionIn,
                                   DelegationIn, DelegationOut, DelegationPatch, ExpenseCategoryIn, ExpenseCategoryOut,
-                                  FlowDetailOut, FlowIn, FlowOut, ForwardIn, LeaveTypeOptionOut,
-                                  LoanCategoryOptionOut, LoanTypeOptionOut, ReimbursementSettingIn,
-                                  ReimbursementSettingOut, RequestDetailOut, RequestIn, RequestPage, RequestTypeOut,
-                                  RestrictionIn, RestrictionOut)
+                                  FlowDetailOut, FlowIn, FlowOut, ForwardIn, GenerateApplicationIn,
+                                  GeneratedApplicationOut, LeaveTypeOptionOut, LoanCategoryOptionOut,
+                                  LoanTypeOptionOut, OvertimeBulkIn, OvertimeBulkOut, OvertimeRequestDetailOut,
+                                  OvertimeRequestPage, ReimbursementSettingIn, ReimbursementSettingOut,
+                                  RequestDetailOut, RequestIn, RequestPage, RequestTypeOut, RestrictionIn,
+                                  RestrictionOut)
 
 router = APIRouter(prefix="/requests", tags=["requests"])
+
+CSV = {"content": {"text/csv": {"schema": {"type": "string"}}},
+       "description": "CSV file (UTF-8): a header line, then one row per request in the list's order, every page"}
 
 
 def request_filters(view: str = Query("my"), status_: str | None = Query(None, alias="status"),
@@ -31,10 +36,15 @@ def request_filters(view: str = Query("my"), status_: str | None = Query(None, a
                     branch_id: int | None = Query(None, alias="branchId"),
                     location_id: int | None = Query(None, alias="locationId"),
                     date_from: date | None = Query(None, alias="from"),
-                    date_to: date | None = Query(None, alias="to")) -> dict:
-    """Filters of the request lists: the My / Subordinates / All tab, status tab and filter panel."""
+                    date_to: date | None = Query(None, alias="to"),
+                    flow_step: str | None = Query(None, alias="flowStep"),
+                    bulk: bool | None = None) -> dict:
+    """Filters of the request lists: the My / Subordinates / All tab, status tab and filter panel.
+    flowStep: an approver kind or authority code (line_manager, hr_manager ...): requests whose current
+    pending step it holds. bulk: true only requests filed in bulk (overtime), false only the others."""
     return {"view": view, "status": status_, "search": q, "employee_id": employee_id, "department_id": department_id,
-            "branch_id": branch_id, "location_id": location_id, "date_from": date_from, "date_to": date_to}
+            "branch_id": branch_id, "location_id": location_id, "date_from": date_from, "date_to": date_to,
+            "flow_step": flow_step, "bulk": bulk}
 
 
 def approval_filters(box: str = Query("requested"), type_: str | None = Query(None, alias="type"),
@@ -45,11 +55,14 @@ def approval_filters(box: str = Query("requested"), type_: str | None = Query(No
                      branch_id: int | None = Query(None, alias="branchId"),
                      location_id: int | None = Query(None, alias="locationId"),
                      date_from: date | None = Query(None, alias="from"),
-                     date_to: date | None = Query(None, alias="to")) -> dict:
-    """Approvals: box = requested | delegates | consents | cancellations; type = a request type code."""
+                     date_to: date | None = Query(None, alias="to"),
+                     flow_step: str | None = Query(None, alias="flowStep")) -> dict:
+    """Approvals: box = requested | delegates | consents | cancellations; type = a request type code;
+    flowStep = an approver kind or authority code (requests whose current pending step it holds)."""
     return {"box": box, "type_code": type_.replace("-", "_") if type_ else None, "status": status_,
             "delegator_id": delegator_id, "search": q, "employee_id": employee_id, "department_id": department_id,
-            "branch_id": branch_id, "location_id": location_id, "date_from": date_from, "date_to": date_to}
+            "branch_id": branch_id, "location_id": location_id, "date_from": date_from, "date_to": date_to,
+            "flow_step": flow_step}
 
 
 # ---------------------------------------------------------------- reference
@@ -111,7 +124,8 @@ def list_approvals(filters: dict = Depends(approval_filters), paging: PageParams
 @router.post("/approvals/bulk-approve", response_model=Item[list[BulkResultOut]])
 def bulk_approve(body: BulkDecisionIn, db: Db = Depends(get_db),
                  ctx: RequestContext = Depends(require("requests.approvals.approve"))) -> dict:
-    """Approves each request on its own; the result says which went through (APR-9)."""
+    """Approves each request on its own; the result says which went through (APR-9). An item may carry the
+    single approve's `details` (e.g. overtime approvedMinutes)."""
     return c.bulk(db, ctx, "approve", body)
 
 
@@ -154,6 +168,7 @@ def forward(request_id: int, body: ForwardIn, db: Db = Depends(get_db),
 @router.post("/approvals/{request_id}/cancel", response_model=Item[RequestDetailOut])
 def cancel_as_approver(request_id: int, body: CancelIn, db: Db = Depends(get_db),
                        ctx: RequestContext = Depends(require("requests.approvals.cancel"))) -> dict:
+    """dates / startTime / endTime only for a work from home request (422 otherwise); stored, see CancelIn."""
     return c.cancel_request(db, ctx, None, request_id, body)
 
 
@@ -353,9 +368,14 @@ def delete_authority(authority_id: int, row_version: str | None = Query(None, al
 
 # ---------------------------------------------------------------- one set of endpoints per request type
 
+# Request types whose responses type their `details` (the others answer details as an object).
+TYPED_OUT = {"overtime": (OvertimeRequestPage, OvertimeRequestDetailOut)}
+
+
 def _add_type(code: str, details_model) -> None:
     slug = code.replace("_", "-")
     body_model = RequestIn[details_model]
+    page_model, detail_model = TYPED_OUT.get(code, (RequestPage, RequestDetailOut))
     can_view, can_create = require(f"requests.{code}.view"), require(f"requests.{code}.create")
     can_cancel, can_export = require(f"requests.{code}.cancel"), require(f"requests.{code}.export")
 
@@ -365,8 +385,18 @@ def _add_type(code: str, details_model) -> None:
 
     def export_requests(filters: dict = Depends(request_filters), db: Db = Depends(get_db),
                         ctx: RequestContext = Depends(can_export)) -> Response:
-        return Response(c.export_requests(db, ctx, code, filters), media_type="text/csv",
-                        headers={"Content-Disposition": f'attachment; filename="{slug}-requests.csv"'})
+        """The list as CSV with the list's filters, every page."""
+        name = f"{slug}-{date.today().isoformat()}.csv"
+        return Response(c.export_requests(db, ctx, code, filters).encode("utf-8"),
+                        media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    def generate_application(body: GenerateApplicationIn, db: Db = Depends(get_db),
+                             ctx: RequestContext = Depends(can_create)) -> dict:
+        """Writes the application text from the form as filled so far (R1). 503 AI_UNAVAILABLE while no
+        model is connected (the screen keeps its manual editor); 422 when there is not enough to write from.
+        Nothing is saved: the text goes into the request's `application` on save."""
+        return c.generate_application(db, ctx, code, body)
 
     def get_request(request_id: int, db: Db = Depends(get_db), ctx: RequestContext = Depends(can_view)) -> dict:
         return c.get_request(db, ctx, code, request_id)
@@ -399,22 +429,37 @@ def _add_type(code: str, details_model) -> None:
 
     tag = [f"requests: {slug}"]
     r = router.add_api_route
-    r(f"/{slug}", list_requests, methods=["GET"], response_model=RequestPage, name=f"list_{code}", tags=tag)
-    r(f"/{slug}/export", export_requests, methods=["GET"], name=f"export_{code}", tags=tag)
-    r(f"/{slug}/{{request_id}}", get_request, methods=["GET"], response_model=Item[RequestDetailOut],
+    r(f"/{slug}", list_requests, methods=["GET"], response_model=page_model, name=f"list_{code}", tags=tag)
+    r(f"/{slug}/export", export_requests, methods=["GET"], name=f"export_{code}", tags=tag,
+      response_class=Response, responses={200: CSV})
+    r(f"/{slug}/application/generate", generate_application, methods=["POST"],
+      response_model=Item[GeneratedApplicationOut], name=f"generate_application_{code}", tags=tag,
+      responses={503: {"description": "AI_UNAVAILABLE: no model is connected"}})
+    if code == "overtime":
+        r(f"/{slug}/bulk", bulk_overtime, methods=["POST"], response_model=Item[OvertimeBulkOut],
+          status_code=status.HTTP_201_CREATED, name="bulk_overtime", tags=tag)
+    r(f"/{slug}/{{request_id}}", get_request, methods=["GET"], response_model=Item[detail_model],
       name=f"get_{code}", tags=tag)
-    r(f"/{slug}", create_request, methods=["POST"], response_model=Item[RequestDetailOut],
+    r(f"/{slug}", create_request, methods=["POST"], response_model=Item[detail_model],
       status_code=status.HTTP_201_CREATED, name=f"create_{code}", tags=tag)
-    r(f"/{slug}/{{request_id}}", update_request, methods=["PUT"], response_model=Item[RequestDetailOut],
+    r(f"/{slug}/{{request_id}}", update_request, methods=["PUT"], response_model=Item[detail_model],
       name=f"update_{code}", tags=tag)
     r(f"/{slug}/{{request_id}}", delete_request, methods=["DELETE"], status_code=status.HTTP_204_NO_CONTENT,
       name=f"delete_{code}", tags=tag)
-    r(f"/{slug}/{{request_id}}/cancel", cancel_request, methods=["POST"], response_model=Item[RequestDetailOut],
+    r(f"/{slug}/{{request_id}}/cancel", cancel_request, methods=["POST"], response_model=Item[detail_model],
       name=f"cancel_{code}", tags=tag)
     r(f"/{slug}/{{request_id}}/attachments", add_attachment, methods=["POST"], response_model=Item[AttachmentOut],
       status_code=status.HTTP_201_CREATED, name=f"add_attachment_{code}", tags=tag)
     r(f"/{slug}/{{request_id}}/attachments/{{attachment_id}}", delete_attachment, methods=["DELETE"],
       status_code=status.HTTP_204_NO_CONTENT, name=f"delete_attachment_{code}", tags=tag)
+
+
+def bulk_overtime(body: OvertimeBulkIn, db: Db = Depends(get_db),
+                  ctx: RequestContext = Depends(require("requests.overtime.create"))) -> dict:
+    """Create Bulk Overtime Request: one overtime request per person (on their behalf), all or nothing.
+    Any refusal files nobody: 422 with fieldErrors naming each person refused (`employeeIds.<id>`).
+    Every request records the bulk id and the type (details.isBulk, bulkId, overtimeType)."""
+    return c.bulk_overtime(db, ctx, body)
 
 
 for _code, _model in TYPE_DETAILS.items():

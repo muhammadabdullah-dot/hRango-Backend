@@ -173,7 +173,25 @@ def import_revisions(db: Db, company_id: int, actor_user_id: int, code: str, row
                    permission_code=code, rows=rows_json)
 
 
+def revision_email_get(db: Db, company_id: int, actor_user_id: int, code: str, id: int) -> Row:
+    return db.call_one("pay.usp_salary_revision_email_get", company_id=company_id, actor_user_id=actor_user_id,
+                       permission_code=code, id=id)
+
+
+def revision_email_send(db: Db, company_id: int, actor_user_id: int, code: str, id: int, row_version: bytes,
+                        mail_enabled: bool, subject: str) -> Row:
+    return db.call_one("pay.usp_salary_revision_email_send", company_id=company_id, actor_user_id=actor_user_id,
+                       permission_code=code, id=id, row_version=row_version, mail_enabled=mail_enabled, subject=subject)
+
+
 # --------------------------------------------------------------------------- leave encashment
+
+def preview_encashment(db: Db, company_id: int, actor_user_id: int, code: str, body, employee_ids_json: str) -> list[Row]:
+    return db.call("pay.usp_leave_encashment_preview", company_id=company_id, actor_user_id=actor_user_id,
+                   permission_code=code, id=body.id, leave_type_id=body.leave_type_id, fiscal_year=body.fiscal_year,
+                   all_employees=body.all_employees, employee_ids=employee_ids_json, basis=body.basis,
+                   amount_per_leave=body.amount_per_leave)
+
 
 def list_encashments(db: Db, company_id: int, actor_user_id: int, code: str, f: dict, page: int, page_size: int):
     return _page(db, "pay.usp_leave_encashment_list", company_id=company_id, actor_user_id=actor_user_id,

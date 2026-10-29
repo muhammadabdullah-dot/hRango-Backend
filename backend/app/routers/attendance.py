@@ -368,9 +368,11 @@ def update_overtime_policy(policy_id: int, body: OvertimePolicyIn, db: Db = Depe
     return c.update_overtime_policy(db, ctx, policy_id, body)
 
 
-@router.delete("/settings/overtime-policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/settings/overtime-policies/{policy_id}", status_code=status.HTTP_204_NO_CONTENT,
+               responses={409: {"description": "IN_USE: approved overtime fell under this policy (usageCount > 0)"}})
 def delete_overtime_policy(policy_id: int, row_version: str | None = Query(None, alias="rowVersion"),
                            db: Db = Depends(get_db),
                            ctx: RequestContext = Depends(require("attendance.settings.overtime_policies.delete"))) -> Response:
+    """Refused (409 IN_USE) once approved overtime fell under the policy: make it inactive instead."""
     c.delete_overtime_policy(db, ctx, policy_id, row_version)
     return _no_content()

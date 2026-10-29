@@ -147,6 +147,12 @@ END
 GO
 
 -- Overtime (req_overtime): approved minutes (or the applied ones) become the day's approved overtime.
+-- Records the overtime policy and slab the minutes fell under (req_overtime.overtime_policy_id and the
+-- slab copied: policy edits replace slabs). The policy is the company's first active daily policy with a
+-- slab holding the minutes.
+-- TODO(overtime policy): policies are not assigned to employees, departments or branches yet; monthly
+-- policies (minutes summed over the month), capping approved minutes by the top slab, and encashment (the
+-- leave credited or the full day paid) are not done; the record says only which slab applied.
 CREATE OR ALTER PROCEDURE [att].[usp_request_apply_overtime]
     @company_id    BIGINT,
     @actor_user_id BIGINT = NULL,
@@ -155,13 +161,31 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
-    DECLARE @employee_id BIGINT, @date DATE;
-    SELECT @employee_id = r.employee_id, @date = ISNULL(o.overtime_date, r.from_date)
+    DECLARE @employee_id BIGINT, @date DATE, @minutes INT;
+    SELECT @employee_id = r.employee_id, @date = ISNULL(o.overtime_date, r.from_date),
+           @minutes = ISNULL(o.approved_minutes, o.applied_minutes)
     FROM [req].[request] r JOIN [req].[req_overtime] o ON o.request_id = r.id
     WHERE r.id = @request_id AND r.company_id = @company_id;
     IF @employee_id IS NULL
         THROW 50404, N'Overtime request not found', 1;
-    EXEC [att].[usp_request_reprocess] @company_id, @actor_user_id, @employee_id, @date, @date, @request_id, NULL;
+
+    DECLARE @policy_id BIGINT, @slab_min INT, @slab_max INT, @encash NVARCHAR(30), @leave_type_id BIGINT;
+    SELECT TOP (1) @policy_id = p.id, @slab_min = s.min_minutes, @slab_max = s.max_minutes,
+           @encash = s.encashment_type, @leave_type_id = s.leave_type_id
+    FROM [att].[overtime_policy] p
+    JOIN [att].[overtime_policy_slab] s ON s.overtime_policy_id = p.id
+    WHERE p.company_id = @company_id AND p.is_active = 1 AND p.period = N'daily'
+      AND @minutes BETWEEN s.min_minutes AND s.max_minutes
+    ORDER BY p.id, s.min_minutes;
+
+    BEGIN TRAN;
+        UPDATE [req].[req_overtime]
+        SET overtime_policy_id = @policy_id, slab_min_minutes = @slab_min, slab_max_minutes = @slab_max,
+            encashment_type = @encash, encashment_leave_type_id = @leave_type_id,
+            updated_at = SYSUTCDATETIME(), updated_by = @actor_user_id
+        WHERE request_id = @request_id;
+        EXEC [att].[usp_request_reprocess] @company_id, @actor_user_id, @employee_id, @date, @date, @request_id, NULL;
+    COMMIT;
 END
 GO
 
@@ -179,7 +203,14 @@ BEGIN
     WHERE r.id = @request_id AND r.company_id = @company_id;
     IF @employee_id IS NULL
         THROW 50404, N'Overtime request not found', 1;
-    EXEC [att].[usp_request_reprocess] @company_id, @actor_user_id, @employee_id, @date, @date, NULL, @request_id;
+    BEGIN TRAN;
+        -- A cancelled overtime no longer counts under a policy.
+        UPDATE [req].[req_overtime]
+        SET overtime_policy_id = NULL, slab_min_minutes = NULL, slab_max_minutes = NULL, encashment_type = NULL,
+            encashment_leave_type_id = NULL, updated_at = SYSUTCDATETIME(), updated_by = @actor_user_id
+        WHERE request_id = @request_id;
+        EXEC [att].[usp_request_reprocess] @company_id, @actor_user_id, @employee_id, @date, @date, NULL, @request_id;
+    COMMIT;
 END
 GO
 

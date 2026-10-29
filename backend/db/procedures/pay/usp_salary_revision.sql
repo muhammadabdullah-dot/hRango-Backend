@@ -39,6 +39,7 @@ BEGIN
                                       AND (n.effective_date > s.effective_date OR (n.effective_date = s.effective_date AND n.id > s.id)))
                       AND [pay].[fn_month_locked_since](s.employee_id, s.effective_date) = 0 THEN 1 ELSE 0 END AS BIT) AS can_edit,
            dp.name AS department_name, l.name AS location_name, b.name AS branch_name, jt.name AS job_title_name, ep.joining_date,
+           ISNULL(em.status, N'none') AS email_status, em.sent_at AS emailed_at,
            s.created_at, s.updated_at, s.row_version
     FROM #ids i
     JOIN [hr].[employee_salary] s ON s.id = i.id
@@ -48,6 +49,8 @@ BEGIN
     LEFT JOIN [org].[branch] b ON b.id = e.branch_id
     LEFT JOIN [org].[job_title] jt ON jt.id = e.job_title_id
     OUTER APPLY (SELECT TOP 1 joining_date FROM [hr].[employment_period] x WHERE x.employee_id = e.id ORDER BY x.joining_date DESC) ep
+    OUTER APPLY (SELECT TOP 1 o.status, o.sent_at FROM [pay].[mail_outbox] o
+                 WHERE o.company_id = @company_id AND o.entity_type = N'hr.employee_salary' AND o.entity_id = s.id ORDER BY o.id DESC) em
     ORDER BY s.effective_date DESC, s.id DESC
     OFFSET (@page - 1) * @page_size ROWS FETCH NEXT @page_size ROWS ONLY;
 END
@@ -73,6 +76,7 @@ BEGIN
                                       AND (n.effective_date > s.effective_date OR (n.effective_date = s.effective_date AND n.id > s.id)))
                       AND [pay].[fn_month_locked_since](s.employee_id, s.effective_date) = 0 THEN 1 ELSE 0 END AS BIT) AS can_edit,
            dp.name AS department_name, l.name AS location_name, b.name AS branch_name, jt.name AS job_title_name, ep.joining_date,
+           ISNULL(em.status, N'none') AS email_status, em.sent_at AS emailed_at,
            s.created_at, s.updated_at, s.row_version
     FROM [hr].[employee_salary] s
     JOIN [hr].[employee] e ON e.id = s.employee_id
@@ -81,6 +85,8 @@ BEGIN
     LEFT JOIN [org].[branch] b ON b.id = e.branch_id
     LEFT JOIN [org].[job_title] jt ON jt.id = e.job_title_id
     OUTER APPLY (SELECT TOP 1 joining_date FROM [hr].[employment_period] x WHERE x.employee_id = e.id ORDER BY x.joining_date DESC) ep
+    OUTER APPLY (SELECT TOP 1 o.status, o.sent_at FROM [pay].[mail_outbox] o
+                 WHERE o.company_id = @company_id AND o.entity_type = N'hr.employee_salary' AND o.entity_id = s.id ORDER BY o.id DESC) em
     WHERE s.id = @id;
 END
 GO
@@ -224,6 +230,8 @@ BEGIN
     IF [pay].[fn_month_locked_since](@emp, @date) = 1
         THROW 50409, N'effectiveDate|MONTH_LOCKED|A payroll from that month on is closed for this person.', 1;
     BEGIN TRAN;
+        DELETE [pay].[mail_outbox] WHERE company_id = @company_id AND entity_type = N'hr.employee_salary' AND entity_id = @id
+                                         AND status IN (N'disabled', N'queued');
         DELETE [hr].[employee_salary] WHERE id = @id;
         INSERT [core].[audit_log] (entity_type, entity_id, action_name, performed_by_user_id, performed_at)
         VALUES (N'hr.employee_salary', @id, N'delete', @actor_user_id, SYSUTCDATETIME());

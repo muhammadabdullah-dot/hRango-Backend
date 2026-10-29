@@ -14,7 +14,8 @@ from app.middlewares.auth import RequestContext
 from app.schemas.common import paginated
 from app.schemas.employees import (BankAccountIn, BankAccountOut, ChangeOut, ContractOut, DependentOut, DocumentOut,
                                    EducationOut, EmergencyContactOut, EmployeeIn, EmployeeLookupOut, EmployeeOut,
-                                   EmploymentPeriodIn, EmploymentPeriodOut, ExperienceOut, HistoryOut, IdentityIn,
+                                   EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut, ExperienceOut,
+                                   HistoryOut, IdentityIn,
                                    PhotoIn, SalaryIn, SalaryOut, SkillOut, UpdateRequestIn, UpdateRequestOut)
 from app.schemas.files import FileRef
 from app.services import employees_service as s
@@ -37,6 +38,15 @@ def _employee(row: dict[str, Any], company_id: int) -> EmployeeOut:
 def list_employees(db: Db, ctx: RequestContext, filters: dict[str, Any], paging: PageParams) -> dict:
     total, rows = s.list_employees(db, ctx, filters, paging.page, paging.page_size)
     return paginated(rows, total, paging.page, paging.page_size, lambda r: _employee(r, ctx.company_id))
+
+
+def employee_summary(db: Db, ctx: RequestContext, filters: dict[str, Any]) -> dict:
+    row = {k: v or 0 for k, v in s.employee_summary(db, ctx, filters).items()}
+    return {"data": EmployeeSummaryOut(
+        total=row["total"],
+        by_gender={"male": row["male"], "female": row["female"], "other": row["other"],
+                   "unspecified": row["unspecified"]},
+        by_status={k: row[k] for k in ("active", "probation", "notice", "left", "inactive")})}
 
 
 def lookup(db: Db, ctx: RequestContext, permission: str, q: str | None, branch_id: int | None,

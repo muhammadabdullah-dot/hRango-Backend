@@ -79,6 +79,48 @@ class PayrollOut(ApiModel):
     row_version: str
 
 
+class CloseEmailSummaryOut(ApiModel):
+    """What the close did about the e-mail. 'disabled': mail is not set up, nothing was sent."""
+    status: Literal["none", "disabled", "queued", "sent", "failed"]
+    sent_count: int
+    failed_count: int
+
+
+class PayrollClosedOut(PayrollOut):
+    """POST /payrolls/{id}/close: the run, plus its close e-mail (null for daily wages)."""
+    email: CloseEmailSummaryOut | None = None
+
+
+class CloseEmailPreviewOut(ApiModel):
+    enabled: bool
+    subject: str
+    body_html: str
+    recipient_count: int
+
+
+class CloseEmailFailureOut(ApiModel):
+    employee_id: str
+    employee_name: str | None
+    error: str | None
+
+
+class CloseEmailOut(ApiModel):
+    """'none' until the run is closed."""
+    status: Literal["none", "disabled", "queued", "sent", "failed"]
+    queued_at: datetime | None
+    sent_at: datetime | None
+    recipient_count: int
+    sent_count: int
+    failed_count: int
+    failures: list[CloseEmailFailureOut]
+
+
+class BankFileFormatOut(ApiModel):
+    code: str
+    name: str
+    extension: str
+
+
 class EmployeeIdsIn(ApiModel):
     employee_ids: list[int] = Field(max_length=10000)
 

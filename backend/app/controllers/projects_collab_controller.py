@@ -3,13 +3,15 @@ from typing import Any
 
 from app.controllers.projects_controller import to_model
 from app.core.db import Db
+from app.core.errors import not_found
 from app.core.files import file_url
 from app.core.paging import PageParams
 from app.core.rowversion import row_version_in, row_version_out
 from app.middlewares.auth import RequestContext
 from app.schemas.common import paginated
-from app.schemas.projects_collab import (AttachmentIn, AttachmentOut, CommentEditIn, CommentIn, CommentOut, ReminderIn,
-                                         ReminderOut, ShareIn, ShareOut, TimeEntryIn, TimeEntryOut)
+from app.schemas.projects_collab import (AttachmentIn, AttachmentLinkIn, AttachmentOut, CommentEditIn, CommentIn,
+                                         CommentOut, ReminderIn, ReminderOut, ShareIn, ShareOut, TimeEntryIn,
+                                         TimeEntryOut)
 from app.services import projects_collab_service
 
 
@@ -47,7 +49,8 @@ def delete_comment(db: Db, ctx: RequestContext, comment_id: int, row_version: st
 # --------------------------------------------------------------------------- attachments
 
 def _attachment(row: dict, company_id: int) -> AttachmentOut:
-    return AttachmentOut(**row, url=file_url(row["file_id"], company_id))
+    url = file_url(row["file_id"], company_id) if row.get("file_id") is not None else row.get("web_url")
+    return AttachmentOut(**row, url=url)
 
 
 def list_attachments(db: Db, ctx: RequestContext, task_id: int) -> dict:
@@ -59,8 +62,20 @@ def add_attachment(db: Db, ctx: RequestContext, task_id: int, body: AttachmentIn
     return {"data": _attachment(projects_collab_service.add_attachment(db, ctx, task_id, body), ctx.company_id)}
 
 
-def delete_attachment(db: Db, ctx: RequestContext, attachment_id: int) -> None:
-    projects_collab_service.delete_attachment(db, ctx, attachment_id)
+def add_attachment_link(db: Db, ctx: RequestContext, task_id: int, body: AttachmentLinkIn) -> dict:
+    return {"data": _attachment(projects_collab_service.add_attachment_link(db, ctx, task_id, body), ctx.company_id)}
+
+
+def delete_attachment(db: Db, ctx: RequestContext, attachment_id: str) -> None:
+    """An uploaded file's attachment id is a number; a link to external storage is "link-<n>"."""
+    link = attachment_id.startswith("link-")
+    number = attachment_id[5:] if link else attachment_id
+    if not number.isdigit():
+        raise not_found("Attachment")
+    if link:
+        projects_collab_service.delete_attachment_link(db, ctx, int(number))
+    else:
+        projects_collab_service.delete_attachment(db, ctx, int(number))
 
 
 # --------------------------------------------------------------------------- time

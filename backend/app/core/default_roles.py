@@ -50,6 +50,8 @@ SELF_SERVICE = [
     ("benefits.files.view", "own"), ("benefits.files.download", "own"),
     ("benefits.elections.view", "own"), ("benefits.elections.create", "own"), ("benefits.elections.edit", "own"),
     ("benefits.health.view", "own"), ("benefits.health.create", "own"),
+    # Filling in the custom forms sent to you; the form's audience decides which ones you see.
+    ("forms.my_forms.view", "own"), ("forms.my_forms.submit", "own"),
     ("benefits.perks.view", "own"), ("benefits.perks.create", "own"),
     ("performance.overview.view", "own"), ("performance.goals.view", "own"), ("performance.goals.create", "own"),
     ("performance.goals.edit", "own"), ("performance.kpis.view", "own"), ("performance.reviews.view", "own"),

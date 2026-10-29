@@ -79,11 +79,28 @@ def run_save(db: Db, company_id: int, actor_user_id: int, id: int, run_kind: str
                        run_kind=run_kind, started_at=started_at, payslips=payslips_json, errors=errors_json)
 
 
-def close_payroll(db: Db, company_id: int, actor_user_id: int, id: int, kind: str,
-                  row_version: bytes) -> tuple[Row, list[Row]]:
+def close_payroll(db: Db, company_id: int, actor_user_id: int, id: int, kind: str, row_version: bytes,
+                  mail_enabled: bool = False, mail_subject: str | None = None) -> tuple[Row, list[Row]]:
     head, items = db.call_sets("pay.usp_payroll_close", company_id=company_id, actor_user_id=actor_user_id, id=id,
-                               kind=kind, row_version=row_version)
+                               kind=kind, row_version=row_version, mail_enabled=mail_enabled, mail_subject=mail_subject)
     return head[0], items
+
+
+def close_email_preview(db: Db, company_id: int, id: int) -> Row:
+    return db.call_one("pay.usp_payroll_close_email_preview", company_id=company_id, id=id)
+
+
+def close_email_get(db: Db, company_id: int, id: int) -> tuple[Row, list[Row]]:
+    head, failures = db.call_sets("pay.usp_payroll_close_email_get", company_id=company_id, id=id)
+    return head[0], failures
+
+
+def bank_file(db: Db, company_id: int, actor_user_id: int, permission_code: str, id: int, kind: str,
+              disbursement_bank_id: int | None) -> tuple[Row, list[Row]]:
+    head, rows = db.call_sets("pay.usp_payroll_bank_file", company_id=company_id, actor_user_id=actor_user_id,
+                              permission_code=permission_code, id=id, kind=kind,
+                              disbursement_bank_id=disbursement_bank_id)
+    return head[0], rows
 
 
 # --------------------------------------------------------------------------- daily wages

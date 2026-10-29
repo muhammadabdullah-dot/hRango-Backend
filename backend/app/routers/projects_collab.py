@@ -9,9 +9,9 @@ from app.core.db import Db, get_db
 from app.core.paging import PageParams, page_params
 from app.middlewares.auth import RequestContext, require
 from app.schemas.common import Item, Paginated
-from app.schemas.projects_collab import (AttachmentIn, AttachmentOut, CommentAssignIn, CommentEditIn, CommentIn,
-                                         CommentOut, CommentResolveIn, ReactionIn, ReminderIn, ReminderOut, ShareIn,
-                                         ShareOut, TimeEntryIn, TimeEntryOut, TimerStopIn)
+from app.schemas.projects_collab import (AttachmentIn, AttachmentLinkIn, AttachmentOut, CommentAssignIn, CommentEditIn,
+                                         CommentIn, CommentOut, CommentResolveIn, ReactionIn, ReminderIn, ReminderOut,
+                                         ShareIn, ShareOut, TimeEntryIn, TimeEntryOut, TimerStopIn)
 
 router = APIRouter()
 NO_CONTENT = status.HTTP_204_NO_CONTENT
@@ -78,8 +78,14 @@ def add_attachment(task_id: int, body: AttachmentIn, db: Db = Depends(get_db),
     return c.add_attachment(db, ctx, task_id, body)
 
 
+@router.post("/tasks/{task_id}/attachments/link", response_model=Item[AttachmentOut], status_code=CREATED)
+def add_attachment_link(task_id: int, body: AttachmentLinkIn, db: Db = Depends(get_db),
+                        ctx: RequestContext = Depends(require("projects.tasks.edit"))) -> dict:
+    return c.add_attachment_link(db, ctx, task_id, body)
+
+
 @router.delete("/attachments/{attachment_id}", status_code=NO_CONTENT)
-def delete_attachment(attachment_id: int, db: Db = Depends(get_db),
+def delete_attachment(attachment_id: str, db: Db = Depends(get_db),
                       ctx: RequestContext = Depends(require("projects.tasks.edit"))) -> Response:
     c.delete_attachment(db, ctx, attachment_id)
     return Response(status_code=NO_CONTENT)

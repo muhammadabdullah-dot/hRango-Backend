@@ -1,6 +1,9 @@
 -- Requests of one type: the My / Subordinates / All tabs, limited to the employees the caller's
 -- list permission reaches (auth.fn_visible_employees). Result sets: the total; the page; counts by
 -- status for the status tabs (without the status filter).
+-- @flow_step: only requests whose current pending step is held by that approver kind or authority
+-- (line_manager, hr_manager ...: the Punch "Request Flow" filter, R3). @bulk: 1 only requests filed in
+-- bulk (req_overtime.bulk_id), 0 only the others.
 CREATE OR ALTER PROCEDURE [req].[usp_request_list]
     @company_id      BIGINT,
     @actor_user_id   BIGINT,
@@ -15,6 +18,8 @@ CREATE OR ALTER PROCEDURE [req].[usp_request_list]
     @location_id     BIGINT = NULL,
     @date_from       DATE = NULL,
     @date_to         DATE = NULL,
+    @flow_step       NVARCHAR(30) = NULL,
+    @bulk            BIT = NULL,
     @page            INT = 1,
     @page_size       INT = 10
 AS
@@ -51,6 +56,12 @@ BEGIN
       AND (@location_id IS NULL OR r.location_id = @location_id)
       AND (@date_from IS NULL OR ISNULL(r.to_date, r.from_date) >= @date_from)
       AND (@date_to IS NULL OR r.from_date <= @date_to)
+      AND (@flow_step IS NULL OR EXISTS (SELECT 1 FROM [req].[request_step] fs
+                                         WHERE fs.request_id = r.id AND fs.action_taken = N'pending'
+                                           AND fs.approver_kind = @flow_step))
+      AND (@bulk IS NULL
+           OR (@bulk = 1 AND EXISTS (SELECT 1 FROM [req].[req_overtime] bo WHERE bo.request_id = r.id AND bo.bulk_id IS NOT NULL))
+           OR (@bulk = 0 AND NOT EXISTS (SELECT 1 FROM [req].[req_overtime] bo WHERE bo.request_id = r.id AND bo.bulk_id IS NOT NULL)))
     OPTION (RECOMPILE);
 
     SELECT COUNT(*) AS total FROM @rows WHERE @status IS NULL OR status = @status;

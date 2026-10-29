@@ -72,6 +72,8 @@ BEGIN
 
     BEGIN TRAN;
         UPDATE [pm].[task_list] SET folder_id = NULL, updated_at = SYSUTCDATETIME(), updated_by = @actor_user_id WHERE folder_id = @id;
+        UPDATE [pm].[doc] SET folder_id = NULL WHERE folder_id = @id;
+        DELETE [pm].[recent_item] WHERE entity_type = N'folder' AND entity_id = @id;
         DELETE [pm].[favorite] WHERE entity_type = N'folder' AND entity_id = @id;
         DELETE [pm].[folder] WHERE id = @id;
     COMMIT;
@@ -204,7 +206,10 @@ BEGIN
         DELETE [pm].[favorite] WHERE entity_type = N'task_list' AND entity_id = @id;
         DELETE [pm].[reminder] WHERE entity_type = N'task_list' AND entity_id = @id;
         DELETE m FROM [pm].[share_member] m JOIN [pm].[share_link] s ON s.id = m.share_link_id WHERE s.entity_type = N'task_list' AND s.entity_id = @id;
+        DELETE x FROM [pm].[share_access] x JOIN [pm].[share_link] s ON s.id = x.share_link_id WHERE s.entity_type = N'task_list' AND s.entity_id = @id;
         DELETE [pm].[share_link] WHERE entity_type = N'task_list' AND entity_id = @id;
+        UPDATE [pm].[doc] SET task_list_id = NULL WHERE task_list_id = @id;
+        DELETE [pm].[recent_item] WHERE entity_type = N'task_list' AND entity_id = @id;
         DELETE [pm].[task_list] WHERE id = @id;
     COMMIT;
 END

@@ -150,3 +150,17 @@ def payroll(client, headers, month: str, tax_structure_id: str, bank_id: str, **
     r = client.post("/api/payroll/payrolls", json=body, headers=headers)
     assert r.status_code == 201, r.text
     return r.json()["data"]
+
+
+def bank_account(db: Db, employee_id: int, account_number: str | None = None, bank_name: str = "Meezan Bank",
+                 primary: bool = True) -> str:
+    number = account_number or f"PK{factories.tag()}"
+    execute(db, "INSERT hr.employee_bank_account (employee_id, account_holder, account_number, bank_name, branch_code, "
+                "is_primary) VALUES (?, NULL, ?, ?, N'0201', ?)", employee_id, number, bank_name, primary)
+    return number
+
+
+def email(db: Db, employee_id: int, address: str | None = None) -> str:
+    address = address or f"emp.{factories.tag()}@test.local"
+    execute(db, "UPDATE hr.employee SET email = ? WHERE id = ?", address, employee_id)
+    return address

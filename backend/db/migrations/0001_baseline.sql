@@ -40,6 +40,8 @@ IF SCHEMA_ID(N'perf') IS NULL EXEC(N'CREATE SCHEMA [perf]');
 GO
 IF SCHEMA_ID(N'trn') IS NULL EXEC(N'CREATE SCHEMA [trn]');
 GO
+IF SCHEMA_ID(N'frm') IS NULL EXEC(N'CREATE SCHEMA [frm]');
+GO
 
 CREATE TABLE [org].[company] (
     [id] BIGINT IDENTITY(1,1) NOT NULL,
@@ -1398,6 +1400,9 @@ CREATE TABLE [req].[request] (
     [decided_at] DATETIME2(0) NULL,
     [cancel_reason] NVARCHAR(MAX) NULL,
     [cancel_requested_at] DATETIME2(0) NULL,
+    [cancel_dates] NVARCHAR(MAX) NULL,
+    [cancel_start_time] TIME(0) NULL,
+    [cancel_end_time] TIME(0) NULL,
     [is_deleted] BIT NOT NULL CONSTRAINT [DF_request_is_deleted] DEFAULT 0,
     [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_request_created_at] DEFAULT SYSUTCDATETIME(),
     [created_by] BIGINT NULL,
@@ -1490,12 +1495,33 @@ CREATE TABLE [req].[req_overtime] (
     [end_time] TIME(0) NOT NULL,
     [applied_minutes] INT NOT NULL,
     [approved_minutes] INT NULL,
+    [overtime_type] NVARCHAR(30) NULL,
+    [bulk_id] BIGINT NULL,
+    [overtime_policy_id] BIGINT NULL,
+    [slab_min_minutes] INT NULL,
+    [slab_max_minutes] INT NULL,
+    [encashment_type] NVARCHAR(30) NULL,
+    [encashment_leave_type_id] BIGINT NULL,
     [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_req_overtime_created_at] DEFAULT SYSUTCDATETIME(),
     [created_by] BIGINT NULL,
     [updated_at] DATETIME2(0) NULL,
     [updated_by] BIGINT NULL,
     [row_version] ROWVERSION,
     CONSTRAINT [PK_req_overtime] PRIMARY KEY CLUSTERED ([request_id])
+);
+GO
+CREATE TABLE [req].[request_bulk] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [request_type_id] BIGINT NOT NULL,
+    [request_count] INT NOT NULL,
+    [reason] NVARCHAR(MAX) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_request_bulk_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_request_bulk] PRIMARY KEY CLUSTERED ([id])
 );
 GO
 CREATE TABLE [req].[req_loan] (
@@ -2447,6 +2473,42 @@ CREATE TABLE [pay].[voucher] (
     [row_version] ROWVERSION,
     CONSTRAINT [PK_voucher] PRIMARY KEY CLUSTERED ([id]),
     CONSTRAINT [UQ_voucher_company_id_voucher_no] UNIQUE ([company_id], [voucher_no])
+);
+GO
+CREATE TABLE [pay].[payroll_close_email] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [payroll_id] BIGINT NOT NULL,
+    [status] NVARCHAR(30) NOT NULL,
+    [recipient_count] INT NULL,
+    [queued_at] DATETIME2(0) NULL,
+    [sent_at] DATETIME2(0) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_payroll_close_email_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_payroll_close_email] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_payroll_close_email_payroll_id] UNIQUE ([payroll_id])
+);
+GO
+CREATE TABLE [pay].[mail_outbox] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [entity_type] NVARCHAR(50) NOT NULL,
+    [entity_id] BIGINT NOT NULL,
+    [employee_id] BIGINT NOT NULL,
+    [to_address] NVARCHAR(254) NULL,
+    [subject] NVARCHAR(300) NULL,
+    [status] NVARCHAR(30) NOT NULL,
+    [queued_at] DATETIME2(0) NULL,
+    [sent_at] DATETIME2(0) NULL,
+    [error] NVARCHAR(1000) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_mail_outbox_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_mail_outbox] PRIMARY KEY CLUSTERED ([id])
 );
 GO
 CREATE TABLE [sep].[asset_type] (
@@ -3879,6 +3941,18 @@ CREATE TABLE [pm].[share_member] (
     CONSTRAINT [PK_share_member] PRIMARY KEY CLUSTERED ([id])
 );
 GO
+CREATE TABLE [pm].[share_access] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [share_link_id] BIGINT NOT NULL,
+    [accessed_at] DATETIME2(0) NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_share_access_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_share_access] PRIMARY KEY CLUSTERED ([id])
+);
+GO
 CREATE TABLE [pm].[favorite] (
     [id] BIGINT IDENTITY(1,1) NOT NULL,
     [employee_id] BIGINT NOT NULL,
@@ -3894,12 +3968,55 @@ CREATE TABLE [pm].[favorite] (
     CONSTRAINT [UQ_favorite_employee_id_entity_type_entity_id_kind] UNIQUE ([employee_id], [entity_type], [entity_id], [kind])
 );
 GO
-CREATE TABLE [pm].[doc] (
+CREATE TABLE [pm].[workspace_overdue_setting] (
     [id] BIGINT IDENTITY(1,1) NOT NULL,
     [workspace_id] BIGINT NOT NULL,
-    [title] NVARCHAR(200) NOT NULL,
-    [body] NVARCHAR(MAX) NULL,
-    [visibility] NVARCHAR(30) NULL,
+    [penalty_percent] DECIMAL(5,2) NOT NULL,
+    [max_extensions] INT NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_workspace_overdue_setting_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_workspace_overdue_setting] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_workspace_overdue_setting_workspace_id] UNIQUE ([workspace_id])
+);
+GO
+CREATE TABLE [pm].[task_external_file] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [task_id] BIGINT NOT NULL,
+    [provider] NVARCHAR(30) NOT NULL,
+    [external_id] NVARCHAR(500) NOT NULL,
+    [name] NVARCHAR(255) NOT NULL,
+    [web_url] NVARCHAR(2000) NOT NULL,
+    [mime_type] NVARCHAR(100) NULL,
+    [size_bytes] BIGINT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_task_external_file_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_task_external_file] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_task_external_file_task_id_provider_external_id] UNIQUE ([task_id], [provider], [external_id])
+);
+GO
+CREATE TABLE [pm].[doc] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [workspace_id] BIGINT NOT NULL,
+    [folder_id] BIGINT NULL,
+    [task_list_id] BIGINT NULL,
+    [title] NVARCHAR(50) NOT NULL,
+    [content] NVARCHAR(MAX) NULL,
+    [content_html] NVARCHAR(MAX) NULL,
+    [visibility] NVARCHAR(30) NOT NULL,
+    [owner_id] BIGINT NOT NULL,
+    [cover_file_id] BIGINT NULL,
+    [settings] NVARCHAR(MAX) NULL,
+    [word_count] INT NULL,
+    [character_count] INT NULL,
+    [archived_at] DATETIME2(0) NULL,
     [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_doc_created_at] DEFAULT SYSUTCDATETIME(),
     [created_by] BIGINT NULL,
     [updated_at] DATETIME2(0) NULL,
@@ -3908,11 +4025,50 @@ CREATE TABLE [pm].[doc] (
     CONSTRAINT [PK_doc] PRIMARY KEY CLUSTERED ([id])
 );
 GO
+CREATE TABLE [pm].[doc_contributor] (
+    [doc_id] BIGINT NOT NULL,
+    [employee_id] BIGINT NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_doc_contributor_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_doc_contributor] PRIMARY KEY CLUSTERED ([doc_id], [employee_id])
+);
+GO
+CREATE TABLE [pm].[doc_task] (
+    [doc_id] BIGINT NOT NULL,
+    [task_id] BIGINT NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_doc_task_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_doc_task] PRIMARY KEY CLUSTERED ([doc_id], [task_id])
+);
+GO
+CREATE TABLE [pm].[doc_comment] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [doc_id] BIGINT NOT NULL,
+    [author_id] BIGINT NOT NULL,
+    [body] NVARCHAR(MAX) NOT NULL,
+    [parent_id] BIGINT NULL,
+    [edited_at] DATETIME2(0) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_doc_comment_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_doc_comment] PRIMARY KEY CLUSTERED ([id])
+);
+GO
 CREATE TABLE [pm].[note] (
     [id] BIGINT IDENTITY(1,1) NOT NULL,
-    [owner_id] BIGINT NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [user_account_id] BIGINT NOT NULL,
     [title] NVARCHAR(200) NOT NULL,
-    [body] NVARCHAR(MAX) NULL,
+    [content_html] NVARCHAR(MAX) NULL,
+    [version_no] INT NULL,
     [archived_at] DATETIME2(0) NULL,
     [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_note_created_at] DEFAULT SYSUTCDATETIME(),
     [created_by] BIGINT NULL,
@@ -3920,6 +4076,56 @@ CREATE TABLE [pm].[note] (
     [updated_by] BIGINT NULL,
     [row_version] ROWVERSION,
     CONSTRAINT [PK_note] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [pm].[note_version] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [note_id] BIGINT NOT NULL,
+    [version_no] INT NOT NULL,
+    [title] NVARCHAR(200) NOT NULL,
+    [content_html] NVARCHAR(MAX) NULL,
+    [edited_by_user_id] BIGINT NULL,
+    [edited_at] DATETIME2(0) NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_note_version_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_note_version] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_note_version_note_id_version_no] UNIQUE ([note_id], [version_no])
+);
+GO
+CREATE TABLE [pm].[personal_item] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [user_account_id] BIGINT NOT NULL,
+    [title] NVARCHAR(120) NOT NULL,
+    [is_done] BIT NOT NULL CONSTRAINT [DF_personal_item_is_done] DEFAULT 0,
+    [due_date] DATE NULL,
+    [done_at] DATETIME2(0) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_personal_item_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_personal_item] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [pm].[recent_item] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [user_account_id] BIGINT NOT NULL,
+    [entity_type] NVARCHAR(50) NOT NULL,
+    [entity_id] BIGINT NOT NULL,
+    [workspace_id] BIGINT NULL,
+    [opened_at] DATETIME2(0) NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_recent_item_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_recent_item] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_recent_item_user_account_id_entity_type_entity_id] UNIQUE ([user_account_id], [entity_type], [entity_id])
 );
 GO
 CREATE TABLE [att].[warning_policy] (
@@ -4505,6 +4711,132 @@ CREATE TABLE [trn].[training_feedback] (
     CONSTRAINT [UQ_training_feedback_training_enrolment_id] UNIQUE ([training_enrolment_id])
 );
 GO
+CREATE TABLE [frm].[form] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [title] NVARCHAR(200) NOT NULL,
+    [description] NVARCHAR(MAX) NULL,
+    [category] NVARCHAR(100) NULL,
+    [status] NVARCHAR(30) NOT NULL,
+    [closes_on] DATE NULL,
+    [audience_kind] NVARCHAR(30) NOT NULL,
+    [is_one_per_person] BIT NOT NULL CONSTRAINT [DF_form_is_one_per_person] DEFAULT 0,
+    [is_anonymous] BIT NOT NULL CONSTRAINT [DF_form_is_anonymous] DEFAULT 0,
+    [published_at] DATETIME2(0) NULL,
+    [published_by_user_id] BIGINT NULL,
+    [closed_at] DATETIME2(0) NULL,
+    [closed_by_user_id] BIGINT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [frm].[form_section] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [form_id] BIGINT NOT NULL,
+    [sort_order] INT NULL,
+    [title] NVARCHAR(200) NOT NULL,
+    [description] NVARCHAR(MAX) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_section_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form_section] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [frm].[form_field] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [form_id] BIGINT NOT NULL,
+    [form_section_id] BIGINT NULL,
+    [sort_order] INT NULL,
+    [field_type] NVARCHAR(30) NOT NULL,
+    [label] NVARCHAR(500) NOT NULL,
+    [help_text] NVARCHAR(1000) NULL,
+    [is_required] BIT NOT NULL CONSTRAINT [DF_form_field_is_required] DEFAULT 0,
+    [min_value] DECIMAL(18,4) NULL,
+    [max_value] DECIMAL(18,4) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_field_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form_field] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [frm].[form_field_option] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [form_field_id] BIGINT NOT NULL,
+    [sort_order] INT NULL,
+    [label] NVARCHAR(500) NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_field_option_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form_field_option] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [frm].[form_audience] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [form_id] BIGINT NOT NULL,
+    [unit_type] NVARCHAR(30) NOT NULL,
+    [unit_id] BIGINT NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_audience_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form_audience] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_form_audience_form_id_unit_type_unit_id] UNIQUE ([form_id], [unit_type], [unit_id])
+);
+GO
+CREATE TABLE [frm].[form_response] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [form_id] BIGINT NOT NULL,
+    [employee_id] BIGINT NOT NULL,
+    [submitted_at] DATETIME2(0) NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_response_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form_response] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [frm].[form_answer] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [form_response_id] BIGINT NOT NULL,
+    [form_field_id] BIGINT NOT NULL,
+    [answer_text] NVARCHAR(MAX) NULL,
+    [answer_number] DECIMAL(18,4) NULL,
+    [answer_date] DATE NULL,
+    [answer_bool] BIT NULL CONSTRAINT [DF_form_answer_answer_bool] DEFAULT 0,
+    [file_id] BIGINT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_answer_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form_answer] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_form_answer_form_response_id_form_field_id] UNIQUE ([form_response_id], [form_field_id])
+);
+GO
+CREATE TABLE [frm].[form_answer_option] (
+    [form_answer_id] BIGINT NOT NULL,
+    [form_field_option_id] BIGINT NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_form_answer_option_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_form_answer_option] PRIMARY KEY CLUSTERED ([form_answer_id], [form_field_option_id])
+);
+GO
 
 -- Foreign keys (all ON DELETE NO ACTION)
 ALTER TABLE [org].[company] ADD CONSTRAINT [FK_company_logo_file_id] FOREIGN KEY ([logo_file_id]) REFERENCES [core].[stored_file] ([id]);
@@ -4698,6 +5030,11 @@ ALTER TABLE [req].[req_overtime] ADD CONSTRAINT [FK_req_overtime_request_id] FOR
 ALTER TABLE [req].[req_overtime] ADD CONSTRAINT [FK_req_overtime_department_id] FOREIGN KEY ([department_id]) REFERENCES [org].[department] ([id]);
 ALTER TABLE [req].[req_overtime] ADD CONSTRAINT [FK_req_overtime_location_id] FOREIGN KEY ([location_id]) REFERENCES [org].[location] ([id]);
 ALTER TABLE [req].[req_overtime] ADD CONSTRAINT [FK_req_overtime_branch_id] FOREIGN KEY ([branch_id]) REFERENCES [org].[branch] ([id]);
+ALTER TABLE [req].[req_overtime] ADD CONSTRAINT [FK_req_overtime_bulk_id] FOREIGN KEY ([bulk_id]) REFERENCES [req].[request_bulk] ([id]);
+ALTER TABLE [req].[req_overtime] ADD CONSTRAINT [FK_req_overtime_overtime_policy_id] FOREIGN KEY ([overtime_policy_id]) REFERENCES [att].[overtime_policy] ([id]);
+ALTER TABLE [req].[req_overtime] ADD CONSTRAINT [FK_req_overtime_encashment_leave_type_id] FOREIGN KEY ([encashment_leave_type_id]) REFERENCES [lv].[leave_type] ([id]);
+ALTER TABLE [req].[request_bulk] ADD CONSTRAINT [FK_request_bulk_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [req].[request_bulk] ADD CONSTRAINT [FK_request_bulk_request_type_id] FOREIGN KEY ([request_type_id]) REFERENCES [req].[request_type] ([id]);
 ALTER TABLE [req].[req_loan] ADD CONSTRAINT [FK_req_loan_request_id] FOREIGN KEY ([request_id]) REFERENCES [req].[request] ([id]);
 ALTER TABLE [req].[req_loan] ADD CONSTRAINT [FK_req_loan_loan_type_id] FOREIGN KEY ([loan_type_id]) REFERENCES [loan].[loan_type] ([id]);
 ALTER TABLE [req].[req_loan] ADD CONSTRAINT [FK_req_loan_loan_category_id] FOREIGN KEY ([loan_category_id]) REFERENCES [loan].[loan_category] ([id]);
@@ -4834,6 +5171,9 @@ ALTER TABLE [pay].[voucher] ADD CONSTRAINT [FK_voucher_approved_by_id] FOREIGN K
 ALTER TABLE [pay].[voucher] ADD CONSTRAINT [FK_voucher_decided_by_user_id] FOREIGN KEY ([decided_by_user_id]) REFERENCES [auth].[user_account] ([id]);
 ALTER TABLE [pay].[voucher] ADD CONSTRAINT [FK_voucher_verified_by_id] FOREIGN KEY ([verified_by_id]) REFERENCES [hr].[employee] ([id]);
 ALTER TABLE [pay].[voucher] ADD CONSTRAINT [FK_voucher_verified_by_user_id] FOREIGN KEY ([verified_by_user_id]) REFERENCES [auth].[user_account] ([id]);
+ALTER TABLE [pay].[payroll_close_email] ADD CONSTRAINT [FK_payroll_close_email_payroll_id] FOREIGN KEY ([payroll_id]) REFERENCES [pay].[payroll] ([id]);
+ALTER TABLE [pay].[mail_outbox] ADD CONSTRAINT [FK_mail_outbox_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [pay].[mail_outbox] ADD CONSTRAINT [FK_mail_outbox_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
 ALTER TABLE [sep].[asset_type] ADD CONSTRAINT [FK_asset_type_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
 ALTER TABLE [sep].[asset] ADD CONSTRAINT [FK_asset_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
 ALTER TABLE [sep].[asset] ADD CONSTRAINT [FK_asset_asset_type_id] FOREIGN KEY ([asset_type_id]) REFERENCES [sep].[asset_type] ([id]);
@@ -5055,9 +5395,32 @@ ALTER TABLE [pm].[list_view] ADD CONSTRAINT [FK_list_view_owner_id] FOREIGN KEY 
 ALTER TABLE [pm].[share_link] ADD CONSTRAINT [FK_share_link_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
 ALTER TABLE [pm].[share_member] ADD CONSTRAINT [FK_share_member_share_link_id] FOREIGN KEY ([share_link_id]) REFERENCES [pm].[share_link] ([id]);
 ALTER TABLE [pm].[share_member] ADD CONSTRAINT [FK_share_member_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
+ALTER TABLE [pm].[share_access] ADD CONSTRAINT [FK_share_access_share_link_id] FOREIGN KEY ([share_link_id]) REFERENCES [pm].[share_link] ([id]);
 ALTER TABLE [pm].[favorite] ADD CONSTRAINT [FK_favorite_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
+ALTER TABLE [pm].[workspace_overdue_setting] ADD CONSTRAINT [FK_workspace_overdue_setting_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
+ALTER TABLE [pm].[task_external_file] ADD CONSTRAINT [FK_task_external_file_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [pm].[task_external_file] ADD CONSTRAINT [FK_task_external_file_task_id] FOREIGN KEY ([task_id]) REFERENCES [pm].[task] ([id]);
+ALTER TABLE [pm].[doc] ADD CONSTRAINT [FK_doc_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
 ALTER TABLE [pm].[doc] ADD CONSTRAINT [FK_doc_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
-ALTER TABLE [pm].[note] ADD CONSTRAINT [FK_note_owner_id] FOREIGN KEY ([owner_id]) REFERENCES [hr].[employee] ([id]);
+ALTER TABLE [pm].[doc] ADD CONSTRAINT [FK_doc_folder_id] FOREIGN KEY ([folder_id]) REFERENCES [pm].[folder] ([id]);
+ALTER TABLE [pm].[doc] ADD CONSTRAINT [FK_doc_task_list_id] FOREIGN KEY ([task_list_id]) REFERENCES [pm].[task_list] ([id]);
+ALTER TABLE [pm].[doc] ADD CONSTRAINT [FK_doc_owner_id] FOREIGN KEY ([owner_id]) REFERENCES [hr].[employee] ([id]);
+ALTER TABLE [pm].[doc] ADD CONSTRAINT [FK_doc_cover_file_id] FOREIGN KEY ([cover_file_id]) REFERENCES [core].[stored_file] ([id]);
+ALTER TABLE [pm].[doc_contributor] ADD CONSTRAINT [FK_doc_contributor_doc_id] FOREIGN KEY ([doc_id]) REFERENCES [pm].[doc] ([id]);
+ALTER TABLE [pm].[doc_contributor] ADD CONSTRAINT [FK_doc_contributor_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
+ALTER TABLE [pm].[doc_task] ADD CONSTRAINT [FK_doc_task_doc_id] FOREIGN KEY ([doc_id]) REFERENCES [pm].[doc] ([id]);
+ALTER TABLE [pm].[doc_task] ADD CONSTRAINT [FK_doc_task_task_id] FOREIGN KEY ([task_id]) REFERENCES [pm].[task] ([id]);
+ALTER TABLE [pm].[doc_comment] ADD CONSTRAINT [FK_doc_comment_doc_id] FOREIGN KEY ([doc_id]) REFERENCES [pm].[doc] ([id]);
+ALTER TABLE [pm].[doc_comment] ADD CONSTRAINT [FK_doc_comment_author_id] FOREIGN KEY ([author_id]) REFERENCES [hr].[employee] ([id]);
+ALTER TABLE [pm].[doc_comment] ADD CONSTRAINT [FK_doc_comment_parent_id] FOREIGN KEY ([parent_id]) REFERENCES [pm].[doc_comment] ([id]);
+ALTER TABLE [pm].[note] ADD CONSTRAINT [FK_note_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [pm].[note] ADD CONSTRAINT [FK_note_user_account_id] FOREIGN KEY ([user_account_id]) REFERENCES [auth].[user_account] ([id]);
+ALTER TABLE [pm].[note_version] ADD CONSTRAINT [FK_note_version_note_id] FOREIGN KEY ([note_id]) REFERENCES [pm].[note] ([id]);
+ALTER TABLE [pm].[note_version] ADD CONSTRAINT [FK_note_version_edited_by_user_id] FOREIGN KEY ([edited_by_user_id]) REFERENCES [auth].[user_account] ([id]);
+ALTER TABLE [pm].[personal_item] ADD CONSTRAINT [FK_personal_item_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [pm].[personal_item] ADD CONSTRAINT [FK_personal_item_user_account_id] FOREIGN KEY ([user_account_id]) REFERENCES [auth].[user_account] ([id]);
+ALTER TABLE [pm].[recent_item] ADD CONSTRAINT [FK_recent_item_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [pm].[recent_item] ADD CONSTRAINT [FK_recent_item_user_account_id] FOREIGN KEY ([user_account_id]) REFERENCES [auth].[user_account] ([id]);
 ALTER TABLE [att].[warning_policy] ADD CONSTRAINT [FK_warning_policy_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
 ALTER TABLE [att].[warning_policy_rule] ADD CONSTRAINT [FK_warning_policy_rule_warning_policy_id] FOREIGN KEY ([warning_policy_id]) REFERENCES [att].[warning_policy] ([id]);
 ALTER TABLE [att].[penalty_rule] ADD CONSTRAINT [FK_penalty_rule_warning_policy_id] FOREIGN KEY ([warning_policy_id]) REFERENCES [att].[warning_policy] ([id]);
@@ -5135,6 +5498,22 @@ ALTER TABLE [trn].[training_enrolment] ADD CONSTRAINT [FK_training_enrolment_dec
 ALTER TABLE [trn].[training_enrolment] ADD CONSTRAINT [FK_training_enrolment_certificate_file_id] FOREIGN KEY ([certificate_file_id]) REFERENCES [core].[stored_file] ([id]);
 ALTER TABLE [trn].[training_attendance] ADD CONSTRAINT [FK_training_attendance_training_enrolment_id] FOREIGN KEY ([training_enrolment_id]) REFERENCES [trn].[training_enrolment] ([id]);
 ALTER TABLE [trn].[training_feedback] ADD CONSTRAINT [FK_training_feedback_training_enrolment_id] FOREIGN KEY ([training_enrolment_id]) REFERENCES [trn].[training_enrolment] ([id]);
+ALTER TABLE [frm].[form] ADD CONSTRAINT [FK_form_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [frm].[form] ADD CONSTRAINT [FK_form_published_by_user_id] FOREIGN KEY ([published_by_user_id]) REFERENCES [auth].[user_account] ([id]);
+ALTER TABLE [frm].[form] ADD CONSTRAINT [FK_form_closed_by_user_id] FOREIGN KEY ([closed_by_user_id]) REFERENCES [auth].[user_account] ([id]);
+ALTER TABLE [frm].[form_section] ADD CONSTRAINT [FK_form_section_form_id] FOREIGN KEY ([form_id]) REFERENCES [frm].[form] ([id]);
+ALTER TABLE [frm].[form_field] ADD CONSTRAINT [FK_form_field_form_id] FOREIGN KEY ([form_id]) REFERENCES [frm].[form] ([id]);
+ALTER TABLE [frm].[form_field] ADD CONSTRAINT [FK_form_field_form_section_id] FOREIGN KEY ([form_section_id]) REFERENCES [frm].[form_section] ([id]);
+ALTER TABLE [frm].[form_field_option] ADD CONSTRAINT [FK_form_field_option_form_field_id] FOREIGN KEY ([form_field_id]) REFERENCES [frm].[form_field] ([id]);
+ALTER TABLE [frm].[form_audience] ADD CONSTRAINT [FK_form_audience_form_id] FOREIGN KEY ([form_id]) REFERENCES [frm].[form] ([id]);
+ALTER TABLE [frm].[form_response] ADD CONSTRAINT [FK_form_response_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [frm].[form_response] ADD CONSTRAINT [FK_form_response_form_id] FOREIGN KEY ([form_id]) REFERENCES [frm].[form] ([id]);
+ALTER TABLE [frm].[form_response] ADD CONSTRAINT [FK_form_response_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
+ALTER TABLE [frm].[form_answer] ADD CONSTRAINT [FK_form_answer_form_response_id] FOREIGN KEY ([form_response_id]) REFERENCES [frm].[form_response] ([id]);
+ALTER TABLE [frm].[form_answer] ADD CONSTRAINT [FK_form_answer_form_field_id] FOREIGN KEY ([form_field_id]) REFERENCES [frm].[form_field] ([id]);
+ALTER TABLE [frm].[form_answer] ADD CONSTRAINT [FK_form_answer_file_id] FOREIGN KEY ([file_id]) REFERENCES [core].[stored_file] ([id]);
+ALTER TABLE [frm].[form_answer_option] ADD CONSTRAINT [FK_form_answer_option_form_answer_id] FOREIGN KEY ([form_answer_id]) REFERENCES [frm].[form_answer] ([id]);
+ALTER TABLE [frm].[form_answer_option] ADD CONSTRAINT [FK_form_answer_option_form_field_option_id] FOREIGN KEY ([form_field_option_id]) REFERENCES [frm].[form_field_option] ([id]);
 GO
 
 -- Indexes
@@ -5281,6 +5660,11 @@ CREATE NONCLUSTERED INDEX [IX_req_rest_day_roster_group_id] ON [req].[req_rest_d
 CREATE NONCLUSTERED INDEX [IX_req_overtime_department_id] ON [req].[req_overtime] ([department_id]);
 CREATE NONCLUSTERED INDEX [IX_req_overtime_location_id] ON [req].[req_overtime] ([location_id]);
 CREATE NONCLUSTERED INDEX [IX_req_overtime_branch_id] ON [req].[req_overtime] ([branch_id]);
+CREATE NONCLUSTERED INDEX [IX_req_overtime_bulk_id] ON [req].[req_overtime] ([bulk_id]);
+CREATE NONCLUSTERED INDEX [IX_req_overtime_overtime_policy_id] ON [req].[req_overtime] ([overtime_policy_id]);
+CREATE NONCLUSTERED INDEX [IX_req_overtime_encashment_leave_type_id] ON [req].[req_overtime] ([encashment_leave_type_id]);
+CREATE NONCLUSTERED INDEX [IX_request_bulk_company_id] ON [req].[request_bulk] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_request_bulk_request_type_id] ON [req].[request_bulk] ([request_type_id]);
 CREATE NONCLUSTERED INDEX [IX_req_loan_loan_type_id] ON [req].[req_loan] ([loan_type_id]);
 CREATE NONCLUSTERED INDEX [IX_req_loan_loan_category_id] ON [req].[req_loan] ([loan_category_id]);
 CREATE NONCLUSTERED INDEX [IX_req_promotion_grade_id] ON [req].[req_promotion] ([grade_id]);
@@ -5387,6 +5771,9 @@ CREATE NONCLUSTERED INDEX [IX_voucher_approved_by_id] ON [pay].[voucher] ([appro
 CREATE NONCLUSTERED INDEX [IX_voucher_decided_by_user_id] ON [pay].[voucher] ([decided_by_user_id]);
 CREATE NONCLUSTERED INDEX [IX_voucher_verified_by_id] ON [pay].[voucher] ([verified_by_id]);
 CREATE NONCLUSTERED INDEX [IX_voucher_verified_by_user_id] ON [pay].[voucher] ([verified_by_user_id]);
+CREATE NONCLUSTERED INDEX [IX_mail_outbox_company_id] ON [pay].[mail_outbox] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_mail_outbox_employee_id] ON [pay].[mail_outbox] ([employee_id]);
+CREATE NONCLUSTERED INDEX [IX_mail_outbox_entity_type_entity_id] ON [pay].[mail_outbox] ([entity_type], [entity_id]);
 CREATE UNIQUE NONCLUSTERED INDEX [UQ_asset_company_id_identification_no] ON [sep].[asset] ([company_id], [identification_no]) WHERE [identification_no] IS NOT NULL;
 CREATE NONCLUSTERED INDEX [IX_asset_asset_type_id] ON [sep].[asset] ([asset_type_id]);
 CREATE NONCLUSTERED INDEX [IX_asset_file_id] ON [sep].[asset] ([file_id]);
@@ -5573,8 +5960,27 @@ CREATE NONCLUSTERED INDEX [IX_list_view_owner_id] ON [pm].[list_view] ([owner_id
 CREATE NONCLUSTERED INDEX [IX_share_link_workspace_id] ON [pm].[share_link] ([workspace_id]);
 CREATE NONCLUSTERED INDEX [IX_share_member_share_link_id] ON [pm].[share_member] ([share_link_id]);
 CREATE NONCLUSTERED INDEX [IX_share_member_employee_id] ON [pm].[share_member] ([employee_id]);
+CREATE NONCLUSTERED INDEX [IX_share_access_share_link_id] ON [pm].[share_access] ([share_link_id]);
+CREATE NONCLUSTERED INDEX [IX_task_external_file_company_id] ON [pm].[task_external_file] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_company_id] ON [pm].[doc] ([company_id]);
 CREATE NONCLUSTERED INDEX [IX_doc_workspace_id] ON [pm].[doc] ([workspace_id]);
-CREATE NONCLUSTERED INDEX [IX_note_owner_id] ON [pm].[note] ([owner_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_folder_id] ON [pm].[doc] ([folder_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_task_list_id] ON [pm].[doc] ([task_list_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_owner_id] ON [pm].[doc] ([owner_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_cover_file_id] ON [pm].[doc] ([cover_file_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_workspace_id_archived_at] ON [pm].[doc] ([workspace_id], [archived_at]);
+CREATE NONCLUSTERED INDEX [IX_doc_contributor_employee_id] ON [pm].[doc_contributor] ([employee_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_task_task_id] ON [pm].[doc_task] ([task_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_comment_doc_id] ON [pm].[doc_comment] ([doc_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_comment_author_id] ON [pm].[doc_comment] ([author_id]);
+CREATE NONCLUSTERED INDEX [IX_doc_comment_parent_id] ON [pm].[doc_comment] ([parent_id]);
+CREATE NONCLUSTERED INDEX [IX_note_company_id] ON [pm].[note] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_note_user_account_id] ON [pm].[note] ([user_account_id]);
+CREATE NONCLUSTERED INDEX [IX_note_version_edited_by_user_id] ON [pm].[note_version] ([edited_by_user_id]);
+CREATE NONCLUSTERED INDEX [IX_personal_item_company_id] ON [pm].[personal_item] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_personal_item_user_account_id] ON [pm].[personal_item] ([user_account_id]);
+CREATE NONCLUSTERED INDEX [IX_recent_item_company_id] ON [pm].[recent_item] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_recent_item_user_account_id_opened_at] ON [pm].[recent_item] ([user_account_id], [opened_at]);
 CREATE NONCLUSTERED INDEX [IX_penalty_rule_leave_type_id] ON [att].[penalty_rule] ([leave_type_id]);
 CREATE NONCLUSTERED INDEX [IX_warning_company_id] ON [att].[warning] ([company_id]);
 CREATE NONCLUSTERED INDEX [IX_warning_employee_id] ON [att].[warning] ([employee_id]);
@@ -5627,6 +6033,22 @@ CREATE NONCLUSTERED INDEX [IX_training_enrolment_employee_id] ON [trn].[training
 CREATE NONCLUSTERED INDEX [IX_training_enrolment_nominated_by_user_id] ON [trn].[training_enrolment] ([nominated_by_user_id]);
 CREATE NONCLUSTERED INDEX [IX_training_enrolment_decided_by_user_id] ON [trn].[training_enrolment] ([decided_by_user_id]);
 CREATE NONCLUSTERED INDEX [IX_training_enrolment_certificate_file_id] ON [trn].[training_enrolment] ([certificate_file_id]);
+CREATE NONCLUSTERED INDEX [IX_form_company_id] ON [frm].[form] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_form_published_by_user_id] ON [frm].[form] ([published_by_user_id]);
+CREATE NONCLUSTERED INDEX [IX_form_closed_by_user_id] ON [frm].[form] ([closed_by_user_id]);
+CREATE NONCLUSTERED INDEX [IX_form_company_id_status] ON [frm].[form] ([company_id], [status]);
+CREATE NONCLUSTERED INDEX [IX_form_section_form_id] ON [frm].[form_section] ([form_id]);
+CREATE NONCLUSTERED INDEX [IX_form_field_form_id] ON [frm].[form_field] ([form_id]);
+CREATE NONCLUSTERED INDEX [IX_form_field_form_section_id] ON [frm].[form_field] ([form_section_id]);
+CREATE NONCLUSTERED INDEX [IX_form_field_option_form_field_id] ON [frm].[form_field_option] ([form_field_id]);
+CREATE NONCLUSTERED INDEX [IX_form_response_company_id] ON [frm].[form_response] ([company_id]);
+CREATE NONCLUSTERED INDEX [IX_form_response_form_id] ON [frm].[form_response] ([form_id]);
+CREATE NONCLUSTERED INDEX [IX_form_response_employee_id] ON [frm].[form_response] ([employee_id]);
+CREATE NONCLUSTERED INDEX [IX_form_response_form_id_submitted_at] ON [frm].[form_response] ([form_id], [submitted_at]);
+CREATE NONCLUSTERED INDEX [IX_form_response_employee_id_form_id] ON [frm].[form_response] ([employee_id], [form_id]);
+CREATE NONCLUSTERED INDEX [IX_form_answer_form_field_id] ON [frm].[form_answer] ([form_field_id]);
+CREATE NONCLUSTERED INDEX [IX_form_answer_file_id] ON [frm].[form_answer] ([file_id]);
+CREATE NONCLUSTERED INDEX [IX_form_answer_option_form_field_option_id] ON [frm].[form_answer_option] ([form_field_option_id]);
 GO
 
 -- Descriptions (visible in SSMS and to anyone reading the database)
@@ -5826,9 +6248,18 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'the Count column: days (lea
 EXEC sys.sp_addextendedproperty N'MS_Description', N'the application text (written by hand or generated)', N'SCHEMA', N'req', N'TABLE', N'request', N'COLUMN', N'application';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'pending, approved, rejected, cancelling, cancelled', N'SCHEMA', N'req', N'TABLE', N'request', N'COLUMN', N'status';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'the flow (version) the request is walking now; cancellation flow while cancelling', N'SCHEMA', N'req', N'TABLE', N'request', N'COLUMN', N'approval_flow_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'WFH cancellation: the days asked for, a JSON list of yyyy-MM-dd (stored only; open product question R2)', N'SCHEMA', N'req', N'TABLE', N'request', N'COLUMN', N'cancel_dates';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'WFH cancellation: from this time (stored only; R2)', N'SCHEMA', N'req', N'TABLE', N'request', N'COLUMN', N'cancel_start_time';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'WFH cancellation: to this time (stored only; R2)', N'SCHEMA', N'req', N'TABLE', N'request', N'COLUMN', N'cancel_end_time';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'deleted by the requester before anyone acted (kept for audit)', N'SCHEMA', N'req', N'TABLE', N'request', N'COLUMN', N'is_deleted';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'shared header for every request', N'SCHEMA', N'req', N'TABLE', N'request';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'each day a multi-day request covers (leave, work from home, rest days)', N'SCHEMA', N'req', N'TABLE', N'request_day';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'mandatory, voluntary (the bulk form''s Type; empty on a single application)', N'SCHEMA', N'req', N'TABLE', N'req_overtime', N'COLUMN', N'overtime_type';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'filed together with others (Create Bulk Overtime Request)', N'SCHEMA', N'req', N'TABLE', N'req_overtime', N'COLUMN', N'bulk_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the slab they fell in, copied (policy edits replace slabs)', N'SCHEMA', N'req', N'TABLE', N'req_overtime', N'COLUMN', N'slab_min_minutes';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'full_day, leave (copied from the slab)', N'SCHEMA', N'req', N'TABLE', N'req_overtime', N'COLUMN', N'encashment_type';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'one overtime request (the Apply form, or one person of a bulk filing)', N'SCHEMA', N'req', N'TABLE', N'req_overtime';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'requests filed together for several people in one all-or-nothing call (bulk overtime)', N'SCHEMA', N'req', N'TABLE', N'request_bulk';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'benefits ticked on a promotion (many to many)', N'SCHEMA', N'req', N'TABLE', N'req_promotion_benefit';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'one expense request = the claims prepared together ("Generate Claim", "Submit All")', N'SCHEMA', N'req', N'TABLE', N'req_expense';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Expense Claim Title*', N'SCHEMA', N'req', N'TABLE', N'expense_line', N'COLUMN', N'title';
@@ -5931,6 +6362,13 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'daily-wage voucher', N'SCHE
 EXEC sys.sp_addextendedproperty N'MS_Description', N'approver''s or verifier''s remarks', N'SCHEMA', N'pay', N'TABLE', N'voucher', N'COLUMN', N'remarks';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'pending, approved, rejected, processed', N'SCHEMA', N'pay', N'TABLE', N'voucher', N'COLUMN', N'status';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Vouchers / Employee Voucher; daily-wage vouchers', N'SCHEMA', N'pay', N'TABLE', N'voucher';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'disabled (mail not set up: nothing sent), queued, sent, failed', N'SCHEMA', N'pay', N'TABLE', N'payroll_close_email', N'COLUMN', N'status';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'people with a released payslip and an e-mail address when it closed', N'SCHEMA', N'pay', N'TABLE', N'payroll_close_email', N'COLUMN', N'recipient_count';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Payroll close e-mail (one per closed monthly run); the people are rows of mail_outbox', N'SCHEMA', N'pay', N'TABLE', N'payroll_close_email';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'pay.payroll (close e-mail), hr.employee_salary (salary revision letter)', N'SCHEMA', N'pay', N'TABLE', N'mail_outbox', N'COLUMN', N'entity_type';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'no FK: the revision row belongs to hr and may be deleted there', N'SCHEMA', N'pay', N'TABLE', N'mail_outbox', N'COLUMN', N'entity_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'disabled, queued, sent, failed', N'SCHEMA', N'pay', N'TABLE', N'mail_outbox', N'COLUMN', N'status';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'payroll e-mails, one row per person: close e-mails and salary revision letters', N'SCHEMA', N'pay', N'TABLE', N'mail_outbox';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Assets -> Asset Types', N'SCHEMA', N'sep', N'TABLE', N'asset_type';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'AST-00001', N'SCHEMA', N'sep', N'TABLE', N'asset', N'COLUMN', N'code';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'serial / identification number', N'SCHEMA', N'sep', N'TABLE', N'asset', N'COLUMN', N'identification_no';
@@ -6144,8 +6582,8 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'@person or #task in a comme
 EXEC sys.sp_addextendedproperty N'MS_Description', N'like or emoji, one per person per comment', N'SCHEMA', N'pm', N'TABLE', N'comment_reaction';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'task, task_list, workspace', N'SCHEMA', N'pm', N'TABLE', N'reminder', N'COLUMN', N'entity_type';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'soft, hard', N'SCHEMA', N'pm', N'TABLE', N'reminder', N'COLUMN', N'reminder_kind';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'stored only; nothing is sent yet', N'SCHEMA', N'pm', N'TABLE', N'reminder';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'Request Extension: one per task; approved keeps story points', N'SCHEMA', N'pm', N'TABLE', N'task_extension';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'delivered by pm.usp_reminder_deliver_due (inbox notification, then notified_at)', N'SCHEMA', N'pm', N'TABLE', N'reminder';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Request Extension: up to the workspace''s max_extensions per task (default 1); approved keeps story points', N'SCHEMA', N'pm', N'TABLE', N'task_extension';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Add Fields', N'SCHEMA', N'pm', N'TABLE', N'custom_field';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'built-in column key, or cf_<custom_field id>', N'SCHEMA', N'pm', N'TABLE', N'column_permission', N'COLUMN', N'column_key';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'blank, or one workspace role', N'SCHEMA', N'pm', N'TABLE', N'column_permission', N'COLUMN', N'member_role';
@@ -6157,10 +6595,30 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'task, task_list, workspace'
 EXEC sys.sp_addextendedproperty N'MS_Description', N'list (single list view), page (whole page)', N'SCHEMA', N'pm', N'TABLE', N'share_link', N'COLUMN', N'share_scope';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Share link with anyone', N'SCHEMA', N'pm', N'TABLE', N'share_link', N'COLUMN', N'is_public';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'JSON: task properties shown', N'SCHEMA', N'pm', N'TABLE', N'share_link', N'COLUMN', N'properties';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'Sharing and Permissions; stored, nothing is sent', N'SCHEMA', N'pm', N'TABLE', N'share_link';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Sharing and Permissions; public links open /api/public/shares/{token}; invitations are not sent yet', N'SCHEMA', N'pm', N'TABLE', N'share_link';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'one row per opening of a public share link (page or task); counts against max_access', N'SCHEMA', N'pm', N'TABLE', N'share_access';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Add to Favorites and Hide, per person', N'SCHEMA', N'pm', N'TABLE', N'favorite';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'not in the first build (no design)', N'SCHEMA', N'pm', N'TABLE', N'doc';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'not in the first build (no design)', N'SCHEMA', N'pm', N'TABLE', N'note';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'0 to 100; share of a closed-late task''s story points taken off', N'SCHEMA', N'pm', N'TABLE', N'workspace_overdue_setting', N'COLUMN', N'penalty_percent';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'extension requests allowed per task (0 to 10)', N'SCHEMA', N'pm', N'TABLE', N'workspace_overdue_setting', N'COLUMN', N'max_extensions';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Overdue settings of a workspace: story point penalty for work closed late, extensions allowed per task', N'SCHEMA', N'pm', N'TABLE', N'workspace_overdue_setting';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'google_drive, dropbox, box, onedrive', N'SCHEMA', N'pm', N'TABLE', N'task_external_file', N'COLUMN', N'provider';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the provider''s file id', N'SCHEMA', N'pm', N'TABLE', N'task_external_file', N'COLUMN', N'external_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'a task attachment that is a link to Google Drive, Dropbox, Box or OneDrive', N'SCHEMA', N'pm', N'TABLE', N'task_external_file';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'1 to 50 characters', N'SCHEMA', N'pm', N'TABLE', N'doc', N'COLUMN', N'title';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the editor''s JSON document', N'SCHEMA', N'pm', N'TABLE', N'doc', N'COLUMN', N'content';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the same content as HTML (search, export, public view)', N'SCHEMA', N'pm', N'TABLE', N'doc', N'COLUMN', N'content_html';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'private (owner only), workspace (everyone who opens the workspace), public', N'SCHEMA', N'pm', N'TABLE', N'doc', N'COLUMN', N'visibility';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'JSON: fontFamily, fontSize, header (cover, title, subtitle, owner, contributors, updatedAt, toc)', N'SCHEMA', N'pm', N'TABLE', N'doc', N'COLUMN', N'settings';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Docs: a rich text page in a workspace (optionally in a folder or list)', N'SCHEMA', N'pm', N'TABLE', N'doc';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'who has edited a doc besides its owner', N'SCHEMA', N'pm', N'TABLE', N'doc_contributor';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Docs linked to tasks', N'SCHEMA', N'pm', N'TABLE', N'doc_task';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'comments on a doc (as task comments: threads by parent_id)', N'SCHEMA', N'pm', N'TABLE', N'doc_comment';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the latest version in note_version', N'SCHEMA', N'pm', N'TABLE', N'note', N'COLUMN', N'version_no';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Notepad: a person''s own notes (per sign-in, not per workspace)', N'SCHEMA', N'pm', N'TABLE', N'note';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'every saved version of a note (Notepad history)', N'SCHEMA', N'pm', N'TABLE', N'note_version';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Home dashboard Personal List: a person''s own to-dos, not tied to a workspace', N'SCHEMA', N'pm', N'TABLE', N'personal_item';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'no foreign key: deleted items drop out of the list', N'SCHEMA', N'pm', N'TABLE', N'recent_item', N'COLUMN', N'workspace_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'what a person opened lately (workspace, folder, task_list, task, doc); newest 50 kept', N'SCHEMA', N'pm', N'TABLE', N'recent_item';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'late_arrival, early_departure, overtime, half_day_leave', N'SCHEMA', N'att', N'TABLE', N'warning_policy', N'COLUMN', N'applies_to';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'day, week, month, year', N'SCHEMA', N'att', N'TABLE', N'warning_policy', N'COLUMN', N'period';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Total Grace Minutes in a period before days count', N'SCHEMA', N'att', N'TABLE', N'warning_policy', N'COLUMN', N'grace_minutes';
@@ -6258,4 +6716,30 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'self, manager, hr', N'SCHEM
 EXEC sys.sp_addextendedproperty N'MS_Description', N'a nomination or a seat on a session, and its result', N'SCHEMA', N'trn', N'TABLE', N'training_enrolment';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'attendance per day of a session', N'SCHEMA', N'trn', N'TABLE', N'training_attendance';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'the participant''s evaluation of a session (1-5)', N'SCHEMA', N'trn', N'TABLE', N'training_feedback';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'free text: Onboarding, IT, Feedback ...', N'SCHEMA', N'frm', N'TABLE', N'form', N'COLUMN', N'category';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'draft, published, closed (a published form past closes_on reads as closed)', N'SCHEMA', N'frm', N'TABLE', N'form', N'COLUMN', N'status';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the last day to answer; blank: open until closed', N'SCHEMA', N'frm', N'TABLE', N'form', N'COLUMN', N'closes_on';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'everyone, departments, branches, people (the targets are form_audience rows)', N'SCHEMA', N'frm', N'TABLE', N'form', N'COLUMN', N'audience_kind';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'"One response per person"', N'SCHEMA', N'frm', N'TABLE', N'form', N'COLUMN', N'is_one_per_person';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'HR sees the answers without the respondent; fixed once there are responses', N'SCHEMA', N'frm', N'TABLE', N'form', N'COLUMN', N'is_anonymous';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Forms list and the builder ("New Form", "Edit")', N'SCHEMA', N'frm', N'TABLE', N'form';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'a titled group of questions, in order', N'SCHEMA', N'frm', N'TABLE', N'form_section';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'optional: blank = before the first section', N'SCHEMA', N'frm', N'TABLE', N'form_field', N'COLUMN', N'form_section_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'order in the whole form (position in its section is derived)', N'SCHEMA', N'frm', N'TABLE', N'form_field', N'COLUMN', N'sort_order';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'short_text, long_text, number, date, single_choice, multiple_choice, dropdown, checkbox, file, rating', N'SCHEMA', N'frm', N'TABLE', N'form_field', N'COLUMN', N'field_type';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'text: length; number: value; multiple_choice: picks', N'SCHEMA', N'frm', N'TABLE', N'form_field', N'COLUMN', N'min_value';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'as min_value; rating: the scale (3 to 10)', N'SCHEMA', N'frm', N'TABLE', N'form_field', N'COLUMN', N'max_value';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'a question', N'SCHEMA', N'frm', N'TABLE', N'form_field';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the options of single_choice, multiple_choice and dropdown questions', N'SCHEMA', N'frm', N'TABLE', N'form_field_option';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'department (with sub-departments), branch, employee', N'SCHEMA', N'frm', N'TABLE', N'form_audience', N'COLUMN', N'unit_type';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'who the form is for when audience_kind is not everyone', N'SCHEMA', N'frm', N'TABLE', N'form_audience';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'kept for anonymous forms too; never shown to HR then', N'SCHEMA', N'frm', N'TABLE', N'form_response', N'COLUMN', N'employee_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'one submission', N'SCHEMA', N'frm', N'TABLE', N'form_response';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'short_text, long_text', N'SCHEMA', N'frm', N'TABLE', N'form_answer', N'COLUMN', N'answer_text';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'number, rating', N'SCHEMA', N'frm', N'TABLE', N'form_answer', N'COLUMN', N'answer_number';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'date', N'SCHEMA', N'frm', N'TABLE', N'form_answer', N'COLUMN', N'answer_date';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'checkbox', N'SCHEMA', N'frm', N'TABLE', N'form_answer', N'COLUMN', N'answer_bool';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'file', N'SCHEMA', N'frm', N'TABLE', N'form_answer', N'COLUMN', N'file_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'one answered question of a response; the column used depends on the type', N'SCHEMA', N'frm', N'TABLE', N'form_answer';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the chosen option(s) of a single_choice, dropdown or multiple_choice answer', N'SCHEMA', N'frm', N'TABLE', N'form_answer_option';
 GO

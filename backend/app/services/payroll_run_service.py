@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any
 
+from app.core import mail
 from app.core.db import Db
 from app.core.errors import AppError
 from app.middlewares.auth import RequestContext
 from app.repos import payroll_runs_repo as repo
 from app.schemas.payroll_runs import DailyWageEditIn, DailyWageIn, EmployeeFilterIn, PayrollIn, PayslipEditIn
-from app.services import payroll_engine, payroll_settings_service
+from app.services import payroll_engine, payroll_mail_service, payroll_settings_service
 
 Row = dict[str, Any]
 CODES = {
@@ -100,8 +101,17 @@ def run(db: Db, ctx: RequestContext, id: int, employee_ids: list[int] | None = N
                          json.dumps(result.payslips), json.dumps(result.errors))
 
 
-def close(db: Db, ctx: RequestContext, id: int, kind: str, row_version: bytes):
-    return repo.close_payroll(db, ctx.company_id, ctx.user_id, id, kind, row_version)
+def close(db: Db, ctx: RequestContext, id: int, kind: str, row_version: bytes) -> tuple[Row, list[Row], Row | None]:
+    """Closes the run. A monthly run also records its close e-mail ('disabled' while mail is not set up) and
+    returns {status, sent_count, failed_count} as the third value (None for daily wages)."""
+    if kind != "monthly":
+        head, items = repo.close_payroll(db, ctx.company_id, ctx.user_id, id, kind, row_version)
+        return head, items, None
+    subject = payroll_mail_service.close_email_subject(db, ctx, id)
+    head, items = repo.close_payroll(db, ctx.company_id, ctx.user_id, id, kind, row_version, mail.enabled(), subject)
+    # TODO(payroll): when mail is enabled, wake the mail sender for the queued rows (see payroll_mail_service).
+    email = repo.close_email_get(db, ctx.company_id, id)[0]
+    return head, items, {k: email[k] for k in ("status", "sent_count", "failed_count")}
 
 
 # --------------------------------------------------------------------------- daily wages

@@ -1,6 +1,9 @@
 """Sends webhook deliveries: takes due ones (core.usp_webhook_due), POSTs the signed event, and records
 the result (core.usp_webhook_delivery_result), which schedules retries. Runs in a background thread of
-the API (settings.webhook_worker) or as its own service (scripts/webhooks.py)."""
+the API (settings.webhook_worker) or as its own service (scripts/webhooks.py).
+
+The same loop sends due project reminders to the inbox once a minute (REMINDER_SECONDS); each one
+becomes a notification.created event, which the next pass delivers."""
 import hashlib
 import hmac
 import json
@@ -16,6 +19,7 @@ from app.core.db import Db, connect
 
 log = logging.getLogger("hrango")
 TIMEOUT_SECONDS = 10
+REMINDER_SECONDS = 60
 USER_AGENT = "HRango-Webhooks/1"
 
 
@@ -66,12 +70,26 @@ def dispatch_once(db: Db, batch: int = 20) -> int:
     return len(rows)
 
 
+def remind_once(db: Db) -> int:
+    """Sends the project reminders that are due (Project Management -> Remind Me)."""
+    from app.services.projects_collab_service import deliver_due_reminders
+
+    return deliver_due_reminders(db)
+
+
 def run_forever(stop: threading.Event, poll_seconds: int) -> None:
+    last_reminders = 0.0
     while not stop.is_set():
         try:
             conn = connect()
             try:
                 db = Db(conn)
+                if time.monotonic() - last_reminders >= REMINDER_SECONDS:
+                    last_reminders = time.monotonic()
+                    try:
+                        remind_once(db)
+                    except Exception:
+                        log.exception("project reminders pass failed")
                 while dispatch_once(db) and not stop.is_set():
                     pass
             finally:

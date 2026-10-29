@@ -34,6 +34,10 @@ def list_employees(db: Db, ctx: RequestContext, filters: dict[str, Any], page: i
                                          page, page_size)
 
 
+def employee_summary(db: Db, ctx: RequestContext, filters: dict[str, Any]) -> dict[str, Any]:
+    return employees_repo.employee_summary(db, ctx.company_id, ctx.user_id, "employees.directory.view", filters)
+
+
 def lookup(db: Db, ctx: RequestContext, permission: str, search: str | None, branch_id: int | None,
            department_id: int | None, include_inactive: bool, page: int,
            page_size: int) -> tuple[int, list[dict[str, Any]]]:

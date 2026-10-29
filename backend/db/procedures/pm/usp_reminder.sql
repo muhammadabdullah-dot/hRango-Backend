@@ -1,5 +1,5 @@
--- Reminders on a task, list or workspace ("Remind Me", BRD "Reminders"). Stored only: nothing is
--- sent until notifications exist. A member sets reminders for themselves; team leaders and above
+-- Reminders on a task, list or workspace ("Remind Me", BRD "Reminders"). usp_reminder_deliver_due (run
+-- by a scheduler) sends them to the inbox. A member sets reminders for themselves; team leaders and above
 -- may give one to another member (delegate). A task reminder cannot fall after the task's due date.
 
 CREATE OR ALTER PROCEDURE [pm].[usp_reminder_list]
@@ -144,4 +144,67 @@ BEGIN
         THROW 50404, N'Reminder not found', 1;
 
     DELETE [pm].[reminder] WHERE id = @id;
+END
+GO
+
+-- Sends the reminders that are due: remind_at minus notify_before_minutes has passed and nothing was sent
+-- yet. Each goes to the reminder's assignee (the owner when nobody else was given it) as an inbox
+-- notification of type projects.reminder, with the item's type and id and a link into the app; then
+-- notified_at is set. remind_at is the company's wall-clock time (as entered), so "now" is each company's
+-- local time (att.fn_company_now) unless @now is given (tests, catch-up runs). @company_id: one company,
+-- or every company when NULL. Returns one row: delivered (count).
+CREATE OR ALTER PROCEDURE [pm].[usp_reminder_deliver_due]
+    @company_id BIGINT = NULL,
+    @now        DATETIME2(0) = NULL,
+    @batch_size INT = 500
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @due TABLE (id BIGINT PRIMARY KEY, company_id BIGINT, workspace_id BIGINT, entity_type NVARCHAR(50), entity_id BIGINT,
+                        name NVARCHAR(200), employee_id BIGINT, remind_at DATETIME2(0), row_version BINARY(8));
+    INSERT @due
+    SELECT TOP (@batch_size) r.id, w.company_id, r.workspace_id, r.entity_type, r.entity_id, r.name,
+           ISNULL(r.assignee_id, r.owner_id), r.remind_at, r.row_version
+    FROM [pm].[reminder] r
+    JOIN [pm].[workspace] w ON w.id = r.workspace_id
+    WHERE r.notified_at IS NULL
+      AND (@company_id IS NULL OR w.company_id = @company_id)
+      AND DATEADD(MINUTE, -ISNULL(r.notify_before_minutes, 0), r.remind_at) <= ISNULL(@now, [att].[fn_company_now](w.company_id))
+    ORDER BY r.remind_at, r.id;
+
+    DECLARE @delivered INT = 0, @id BIGINT = (SELECT MIN(id) FROM @due);
+    DECLARE @company BIGINT, @ws BIGINT, @etype NVARCHAR(50), @eid BIGINT, @name NVARCHAR(200), @emp BIGINT, @at DATETIME2(0),
+            @rv BINARY(8), @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500), @ntype NVARCHAR(50);
+    WHILE @id IS NOT NULL
+    BEGIN
+        SELECT @company = company_id, @ws = workspace_id, @etype = entity_type, @eid = entity_id, @name = name, @emp = employee_id,
+               @at = remind_at, @rv = row_version
+        FROM @due WHERE id = @id;
+        -- The inbox speaks of a task, list, workspace (or doc) and links to where it opens.
+        SET @ntype = CASE @etype WHEN N'task_list' THEN N'list' ELSE @etype END;
+        SET @link = CASE @etype
+            WHEN N'task' THEN CONCAT(N'/project-management/workspaces/', @ws, N'?task=', @eid)
+            WHEN N'task_list' THEN CONCAT(N'/project-management/workspaces/', @ws, N'?list=', @eid)
+            ELSE CONCAT(N'/project-management/workspaces/', @ws) END;
+        SET @title = LEFT(CONCAT(N'Reminder: ', @name), 200);
+        SET @body = CONCAT(CASE @etype WHEN N'task' THEN N'Task' WHEN N'task_list' THEN N'List' ELSE N'Workspace' END,
+                           N' reminder for ', CONVERT(NVARCHAR(16), @at, 120), N'.');
+
+        BEGIN TRAN;
+            -- Claimed first, so a run that overlaps another does not send it twice.
+            UPDATE [pm].[reminder] SET notified_at = SYSUTCDATETIME() WHERE id = @id AND notified_at IS NULL AND row_version = @rv;
+            IF @@ROWCOUNT = 1
+            BEGIN
+                EXEC [core].[usp_notification_add_employee] @quiet = 1, @company_id = @company, @employee_id = @emp, @title = @title,
+                     @body = @body, @notification_type = N'projects.reminder', @link = @link, @entity_type = @ntype, @entity_id = @eid;
+                SET @delivered += 1;
+            END
+        COMMIT;
+
+        SET @id = (SELECT MIN(id) FROM @due WHERE id > @id);
+    END
+
+    SELECT @delivered AS delivered;
 END

@@ -18,10 +18,11 @@ from app.schemas.common import paginated
 from app.schemas.requests import (AttachmentIn, AttachmentOut, AuthorityIn, AuthorityOut, BulkDecisionIn,
                                   BulkResultOut, CancelIn, ColleagueOptionOut, ConsentIn, DecisionIn, DelegationIn,
                                   DelegationOut, DelegationPatch, ExpenseCategoryIn, ExpenseCategoryOut, FlowDetailOut,
-                                  FlowIn, FlowNodeOut, FlowOut, ForwardIn, LeaveTypeOptionOut, LoanCategoryOptionOut,
-                                  LoanTypeOptionOut, ReimbursementSettingIn, ReimbursementSettingOut,
-                                  RequestDetailOut, RequestIn, RequestOut, RequestTypeOut, RestrictionIn,
-                                  RestrictionOut, StepOut)
+                                  FlowIn, FlowNodeOut, FlowOut, ForwardIn, GenerateApplicationIn,
+                                  GeneratedApplicationOut, LeaveTypeOptionOut, LoanCategoryOptionOut,
+                                  LoanTypeOptionOut, OvertimeBulkIn, OvertimeBulkOut, ReimbursementSettingIn,
+                                  ReimbursementSettingOut, RequestDetailOut, RequestIn, RequestOut, RequestTypeOut,
+                                  RestrictionIn, RestrictionOut, StepOut)
 from app.services import requests_service as svc
 
 
@@ -52,7 +53,8 @@ def _pick(model, row: dict[str, Any]) -> dict[str, Any]:
 
 def _request(row: dict[str, Any], company_id: int) -> RequestOut:
     details = _with_links(_camel(json.loads(row["details_json"])), company_id) if row.get("details_json") else {}
-    return RequestOut(**{**_pick(RequestOut, row), "details": details,
+    cancel_dates = json.loads(row["cancel_dates"]) if row.get("cancel_dates") else None
+    return RequestOut(**{**_pick(RequestOut, row), "details": details, "cancel_dates": cancel_dates,
                          "row_version": row_version_out(row["row_version"])})
 
 
@@ -105,12 +107,23 @@ def export_requests(db: Db, ctx: RequestContext, type_code: str, filters: dict[s
     _, rows, _ = svc.list_requests(db, ctx, type_code, filters, 1, 10000)
     out = io.StringIO()
     w = csv.writer(out)
-    w.writerow(["Code", "Employee code", "Employee", "Department", "From", "To", "Count", "Status", "Submitted",
-                "Next requestee", "Approving authority"])
+    head = ["Code", "Employee code", "Employee", "Department", "From", "To", "Count", "Status", "Submitted",
+            "Next requestee", "Approving authority"]
+    overtime = type_code == "overtime"
+    if overtime:
+        head += ["Overtime date", "Start time", "End time", "Applied minutes", "Approved minutes", "Type", "Bulk",
+                 "Location", "Branch"]
+    w.writerow(head)
     for r in rows:
-        w.writerow([r["code"], r["employee_code"], r["employee_name"], r["department_name"], r["from_date"],
-                    r["to_date"], r["days"], r["status"], r["submitted_at"], r["next_approver_name"],
-                    r["final_authority_name"]])
+        line = [r["code"], r["employee_code"], r["employee_name"], r["department_name"], r["from_date"],
+                r["to_date"], r["days"], r["status"], r["submitted_at"], r["next_approver_name"],
+                r["final_authority_name"]]
+        if overtime:
+            d = json.loads(r["details_json"]) if r.get("details_json") else {}
+            line += [d.get("overtime_date"), d.get("start_time"), d.get("end_time"), d.get("applied_minutes"),
+                     d.get("approved_minutes"), d.get("overtime_type"), "yes" if d.get("is_bulk") else "no",
+                     d.get("location_name"), d.get("branch_name")]
+        w.writerow(line)
     return out.getvalue()
 
 
@@ -131,8 +144,20 @@ def delete_request(db: Db, ctx: RequestContext, type_code: str, request_id: int,
 
 
 def cancel_request(db: Db, ctx: RequestContext, type_code: str | None, request_id: int, body: CancelIn) -> dict:
-    return _detail(ctx, svc.cancel(db, ctx, request_id, body.reason, row_version_in(body.row_version), type_code),
+    return _detail(ctx, svc.cancel(db, ctx, request_id, body.reason, row_version_in(body.row_version), type_code,
+                                   body.dates, body.start_time, body.end_time),
                    "requester" if type_code else "approver")
+
+
+def generate_application(db: Db, ctx: RequestContext, type_code: str, body: GenerateApplicationIn) -> dict:
+    text, generated_at = svc.generate_application(db, ctx, type_code, body)
+    return {"data": GeneratedApplicationOut(text=text, generated_at=generated_at)}
+
+
+def bulk_overtime(db: Db, ctx: RequestContext, body: OvertimeBulkIn) -> dict:
+    bulk_id, heads = svc.bulk_overtime(db, ctx, body)
+    return {"data": OvertimeBulkOut(bulk_id=str(bulk_id), overtime_type=body.overtime_type, count=len(heads),
+                                    requests=[_request(h, ctx.company_id).model_dump(by_alias=False) for h in heads])}
 
 
 def add_attachment(db: Db, ctx: RequestContext, type_code: str, request_id: int, body: AttachmentIn) -> dict:
@@ -176,7 +201,9 @@ def forward(db: Db, ctx: RequestContext, request_id: int, body: ForwardIn) -> di
 
 
 def bulk(db: Db, ctx: RequestContext, action: str, body: BulkDecisionIn) -> dict:
-    items = [(i.id, row_version_in(i.row_version)) for i in body.items]
+    items = [(i.id, row_version_in(i.row_version),
+              i.details.model_dump(mode="json", by_alias=False, exclude_none=True) if i.details and action == "approve"
+              else None) for i in body.items]
     return {"data": [BulkResultOut(**r) for r in svc.bulk_decide(db, ctx, action, items, body.remarks)]}
 
 

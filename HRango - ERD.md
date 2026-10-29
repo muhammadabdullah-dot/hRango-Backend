@@ -27,20 +27,21 @@ Each module gets one file per layer: `app/routers/<module>.py`, `app/controllers
 | 4 | Shifts and scheduling | `sch` | `scheduling` | 14 |
 | 5 | Attendance | `att` | `attendance` | 12 |
 | 6 | Leave | `lv` | `leave` | 9 |
-| 7 | Requests and approvals | `req` | `requests` | 33 |
+| 7 | Requests and approvals | `req` | `requests` | 34 |
 | 8 | Loans | `loan` | `loans` | 5 |
-| 9 | Payroll | `pay` | `payroll` | 22 |
+| 9 | Payroll | `pay` | `payroll` | 24 |
 | 10 | Assets and separation | `sep` | `separation` | 10 |
 | 11 | Recruitment | `rec` | `recruitment` | 9 |
 | 12 | Manpower planning | `mp` | `manpower` | 7 |
 | 13 | Shared | `core` | `core` | 10 |
 | 14 | Engagement | `eng` | `engagement` | 16 |
-| 15 | Project and task management | `pm` | `projects` | 31 |
+| 15 | Project and task management | `pm` | `projects` | 40 |
 | 16 | Warnings | `att` | `attendance` | 4 |
 | 17 | Benefits | `ben` | `benefits` | 10 |
 | 18 | Performance | `perf` | `performance` | 11 |
 | 19 | Training | `trn` | `training` | 6 |
-| | **Total** | | | **250** |
+| 20 | Custom Form | `frm` | `forms` | 8 |
+| | **Total** | | | **270** |
 
 ---
 
@@ -1102,6 +1103,9 @@ req.request    -- shared header for every request
   decided_at            DATETIME2(0)
   cancel_reason         NVARCHAR(MAX)
   cancel_requested_at   DATETIME2(0)
+  cancel_dates          NVARCHAR(MAX)    -- WFH cancellation: the days asked for, a JSON list of yyyy-MM-dd (stored only; open product question R2)
+  cancel_start_time     TIME(0)    -- WFH cancellation: from this time (stored only; R2)
+  cancel_end_time       TIME(0)    -- WFH cancellation: to this time (stored only; R2)
   is_deleted            BIT               NN    -- deleted by the requester before anyone acted (kept for audit)
   UNIQUE (company_id, code)
 ```
@@ -1154,16 +1158,32 @@ req.req_rest_day
 ```
 
 ```
-req.req_overtime
-  request_id         BIGINT            NN  PK  FK → req.request
-  department_id      BIGINT            NN  PK  FK → org.department
-  location_id        BIGINT                PK  FK → org.location
-  branch_id          BIGINT                PK  FK → org.branch
-  overtime_date      DATE              NN
-  start_time         TIME(0)           NN
-  end_time           TIME(0)           NN
-  applied_minutes    INT               NN
-  approved_minutes   INT
+req.req_overtime    -- one overtime request (the Apply form, or one person of a bulk filing)
+  request_id                 BIGINT            NN  PK  FK → req.request
+  department_id              BIGINT            NN  PK  FK → org.department
+  location_id                BIGINT                PK  FK → org.location
+  branch_id                  BIGINT                PK  FK → org.branch
+  overtime_date              DATE              NN
+  start_time                 TIME(0)           NN
+  end_time                   TIME(0)           NN
+  applied_minutes            INT               NN
+  approved_minutes           INT
+  overtime_type              NVARCHAR(30)    -- mandatory, voluntary (the bulk form's Type; empty on a single application)
+  bulk_id                    BIGINT                PK  FK → req.request_bulk    -- filed together with others (Create Bulk Overtime Request)
+  overtime_policy_id         BIGINT                PK  FK → att.overtime_policy
+  slab_min_minutes           INT    -- the slab they fell in, copied (policy edits replace slabs)
+  slab_max_minutes           INT
+  encashment_type            NVARCHAR(30)    -- full_day, leave (copied from the slab)
+  encashment_leave_type_id   BIGINT                PK  FK → lv.leave_type
+```
+
+```
+req.request_bulk    -- requests filed together for several people in one all-or-nothing call (bulk overtime)
+  id                BIGINT IDENTITY   NN  PK
+  company_id        BIGINT            NN      FK → org.company
+  request_type_id   BIGINT            NN      FK → req.request_type
+  request_count     INT               NN
+  reason            NVARCHAR(MAX)
 ```
 
 ```
@@ -1477,6 +1497,8 @@ req.request_step    -- one row per event and approver action; the Flow and Histo
 Relationships:
 ```
 request_type 1──* request 1──1 req_<kind>
+request_bulk 1──* req_overtime
+req_overtime *──1 overtime_policy   (the policy an approval fell under)
 request 1──* request_day / request_step / loan_guarantor / travel_* / expense_line / requisition_line
 expense_category 1──* expense_line
 expense_line / req_air_ticket ──> opening_balance   (payroll pays the approved claim)
@@ -1887,6 +1909,32 @@ pay.voucher    -- Vouchers / Employee Voucher; daily-wage vouchers
   UNIQUE (payroll_id, employee_id)
 ```
 
+```
+pay.payroll_close_email    -- Payroll close e-mail (one per closed monthly run); the people are rows of mail_outbox
+  id                BIGINT IDENTITY   NN  PK
+  payroll_id        BIGINT            NN      FK → pay.payroll
+  status            NVARCHAR(30)      NN    -- disabled (mail not set up: nothing sent), queued, sent, failed
+  recipient_count   INT    -- people with a released payslip and an e-mail address when it closed
+  queued_at         DATETIME2(0)
+  sent_at           DATETIME2(0)
+  UNIQUE (payroll_id)
+```
+
+```
+pay.mail_outbox    -- payroll e-mails, one row per person: close e-mails and salary revision letters
+  id            BIGINT IDENTITY   NN  PK
+  company_id    BIGINT            NN      FK → org.company
+  entity_type   NVARCHAR(50)      NN    -- pay.payroll (close e-mail), hr.employee_salary (salary revision letter)
+  entity_id     BIGINT            NN    -- no FK: the revision row belongs to hr and may be deleted there
+  employee_id   BIGINT            NN      FK → hr.employee
+  to_address    NVARCHAR(254)
+  subject       NVARCHAR(300)
+  status        NVARCHAR(30)      NN    -- disabled, queued, sent, failed
+  queued_at     DATETIME2(0)
+  sent_at       DATETIME2(0)
+  error         NVARCHAR(1000)
+```
+
 Relationships:
 ```
 tax_structure 1──* tax_slab
@@ -1898,6 +1946,8 @@ payroll *──* employee   (payroll_employee)
 payroll 1──* payslip 1──* payslip_line *──1 pay_item
 payroll 1──* payroll_run_log 1──* payroll_run_error
 employee 1──* opening_balance / employee_account_entry / tax_rebate / voucher
+payroll 1──1 payroll_close_email
+employee 1──* mail_outbox
 ```
 
 ---
@@ -2902,7 +2952,7 @@ pm.comment_reaction    -- like or emoji, one per person per comment
 ```
 
 ```
-pm.reminder    -- stored only; nothing is sent yet
+pm.reminder    -- delivered by pm.usp_reminder_deliver_due (inbox notification, then notified_at)
   id                      BIGINT IDENTITY   NN  PK
   workspace_id            BIGINT            NN      FK → pm.workspace
   entity_type             NVARCHAR(50)      NN    -- task, task_list, workspace
@@ -2917,7 +2967,7 @@ pm.reminder    -- stored only; nothing is sent yet
 ```
 
 ```
-pm.task_extension    -- Request Extension: one per task; approved keeps story points
+pm.task_extension    -- Request Extension: up to the workspace's max_extensions per task (default 1); approved keeps story points
   id                BIGINT IDENTITY   NN  PK
   task_id           BIGINT            NN      FK → pm.task
   requested_by_id   BIGINT            NN      FK → hr.employee
@@ -2978,7 +3028,7 @@ pm.list_view    -- views of a workspace (task_list_id blank) or of one list
 ```
 
 ```
-pm.share_link    -- Sharing and Permissions; stored, nothing is sent
+pm.share_link    -- Sharing and Permissions; public links open /api/public/shares/{token}; invitations are not sent yet
   id                 BIGINT IDENTITY   NN  PK
   workspace_id       BIGINT            NN      FK → pm.workspace
   entity_type        NVARCHAR(50)      NN    -- task, task_list, workspace
@@ -3006,6 +3056,13 @@ pm.share_member
 ```
 
 ```
+pm.share_access    -- one row per opening of a public share link (page or task); counts against max_access
+  id              BIGINT IDENTITY   NN  PK
+  share_link_id   BIGINT            NN      FK → pm.share_link
+  accessed_at     DATETIME2(0)      NN
+```
+
+```
 pm.favorite    -- Add to Favorites and Hide, per person
   id            BIGINT IDENTITY   NN  PK
   employee_id   BIGINT            NN      FK → hr.employee
@@ -3016,21 +3073,113 @@ pm.favorite    -- Add to Favorites and Hide, per person
 ```
 
 ```
-pm.doc    -- not in the first build (no design)
-  id             BIGINT IDENTITY   NN  PK
-  workspace_id   BIGINT            NN      FK → pm.workspace
-  title          NVARCHAR(200)     NN
-  body           NVARCHAR(MAX)
-  visibility     NVARCHAR(30)
+pm.workspace_overdue_setting    -- Overdue settings of a workspace: story point penalty for work closed late, extensions allowed per task
+  id                BIGINT IDENTITY   NN  PK
+  workspace_id      BIGINT            NN      FK → pm.workspace
+  penalty_percent   DECIMAL(5,2)      NN    -- 0 to 100; share of a closed-late task's story points taken off
+  max_extensions    INT               NN    -- extension requests allowed per task (0 to 10)
+  UNIQUE (workspace_id)
 ```
 
 ```
-pm.note    -- not in the first build (no design)
+pm.task_external_file    -- a task attachment that is a link to Google Drive, Dropbox, Box or OneDrive
   id            BIGINT IDENTITY   NN  PK
-  owner_id      BIGINT            NN      FK → hr.employee
-  title         NVARCHAR(200)     NN
-  body          NVARCHAR(MAX)
-  archived_at   DATETIME2(0)
+  company_id    BIGINT            NN      FK → org.company
+  task_id       BIGINT            NN      FK → pm.task
+  provider      NVARCHAR(30)      NN    -- google_drive, dropbox, box, onedrive
+  external_id   NVARCHAR(500)     NN    -- the provider's file id
+  name          NVARCHAR(255)     NN
+  web_url       NVARCHAR(2000)    NN
+  mime_type     NVARCHAR(100)
+  size_bytes    BIGINT
+  UNIQUE (task_id, provider, external_id)
+```
+
+```
+pm.doc    -- Docs: a rich text page in a workspace (optionally in a folder or list)
+  id                BIGINT IDENTITY   NN  PK
+  company_id        BIGINT            NN      FK → org.company
+  workspace_id      BIGINT            NN      FK → pm.workspace
+  folder_id         BIGINT                    FK → pm.folder
+  task_list_id      BIGINT                    FK → pm.task_list
+  title             NVARCHAR(50)      NN    -- 1 to 50 characters
+  content           NVARCHAR(MAX)    -- the editor's JSON document
+  content_html      NVARCHAR(MAX)    -- the same content as HTML (search, export, public view)
+  visibility        NVARCHAR(30)      NN    -- private (owner only), workspace (everyone who opens the workspace), public
+  owner_id          BIGINT            NN      FK → hr.employee
+  cover_file_id     BIGINT                    FK → core.stored_file
+  settings          NVARCHAR(MAX)    -- JSON: fontFamily, fontSize, header (cover, title, subtitle, owner, contributors, updatedAt, toc)
+  word_count        INT
+  character_count   INT
+  archived_at       DATETIME2(0)
+```
+
+```
+pm.doc_contributor    -- who has edited a doc besides its owner
+  doc_id        BIGINT            NN  PK  FK → pm.doc
+  employee_id   BIGINT            NN  PK  FK → hr.employee
+```
+
+```
+pm.doc_task    -- Docs linked to tasks
+  doc_id    BIGINT            NN  PK  FK → pm.doc
+  task_id   BIGINT            NN  PK  FK → pm.task
+```
+
+```
+pm.doc_comment    -- comments on a doc (as task comments: threads by parent_id)
+  id          BIGINT IDENTITY   NN  PK
+  doc_id      BIGINT            NN      FK → pm.doc
+  author_id   BIGINT            NN      FK → hr.employee
+  body        NVARCHAR(MAX)     NN
+  parent_id   BIGINT                    FK → pm.doc_comment
+  edited_at   DATETIME2(0)
+```
+
+```
+pm.note    -- Notepad: a person's own notes (per sign-in, not per workspace)
+  id                BIGINT IDENTITY   NN  PK
+  company_id        BIGINT            NN      FK → org.company
+  user_account_id   BIGINT            NN      FK → auth.user_account
+  title             NVARCHAR(200)     NN
+  content_html      NVARCHAR(MAX)
+  version_no        INT    -- the latest version in note_version
+  archived_at       DATETIME2(0)
+```
+
+```
+pm.note_version    -- every saved version of a note (Notepad history)
+  id                  BIGINT IDENTITY   NN  PK
+  note_id             BIGINT            NN      FK → pm.note
+  version_no          INT               NN
+  title               NVARCHAR(200)     NN
+  content_html        NVARCHAR(MAX)
+  edited_by_user_id   BIGINT                    FK → auth.user_account
+  edited_at           DATETIME2(0)      NN
+  UNIQUE (note_id, version_no)
+```
+
+```
+pm.personal_item    -- Home dashboard Personal List: a person's own to-dos, not tied to a workspace
+  id                BIGINT IDENTITY   NN  PK
+  company_id        BIGINT            NN      FK → org.company
+  user_account_id   BIGINT            NN      FK → auth.user_account
+  title             NVARCHAR(120)     NN
+  is_done           BIT               NN
+  due_date          DATE
+  done_at           DATETIME2(0)
+```
+
+```
+pm.recent_item    -- what a person opened lately (workspace, folder, task_list, task, doc); newest 50 kept
+  id                BIGINT IDENTITY   NN  PK
+  company_id        BIGINT            NN      FK → org.company
+  user_account_id   BIGINT            NN      FK → auth.user_account
+  entity_type       NVARCHAR(50)      NN
+  entity_id         BIGINT            NN
+  workspace_id      BIGINT    -- no foreign key: deleted items drop out of the list
+  opened_at         DATETIME2(0)      NN
+  UNIQUE (user_account_id, entity_type, entity_id)
 ```
 
 Relationships:
@@ -3044,6 +3193,12 @@ task 1──* time_entry / task_comment / checklist_item / task_dependency / tas
 task_comment 1──* comment_mention / comment_reaction
 custom_field 1──* task_field_value
 share_link 1──* share_member
+workspace 1──1 workspace_overdue_setting
+task 1──* task_external_file
+workspace 1──* doc 1──* doc_comment
+doc *──* task (doc_task)
+doc *──* employee (doc_contributor)
+note 1──* note_version
 ```
 
 ---
@@ -3522,6 +3677,106 @@ training_category 1──* training_program 1──* training_session 1──* t
 training_enrolment 1──* training_attendance
 training_enrolment 1──0..1 training_feedback
 training_program 1──* attachment   (materials)
+```
+
+---
+
+## 20. Custom Form  (`frm`)
+
+```
+frm.form    -- Forms list and the builder ("New Form", "Edit")
+  id                     BIGINT IDENTITY   NN  PK
+  company_id             BIGINT            NN      FK → org.company
+  title                  NVARCHAR(200)     NN
+  description            NVARCHAR(MAX)
+  category               NVARCHAR(100)    -- free text: Onboarding, IT, Feedback ...
+  status                 NVARCHAR(30)      NN    -- draft, published, closed (a published form past closes_on reads as closed)
+  closes_on              DATE    -- the last day to answer; blank: open until closed
+  audience_kind          NVARCHAR(30)      NN    -- everyone, departments, branches, people (the targets are form_audience rows)
+  is_one_per_person      BIT               NN    -- "One response per person"
+  is_anonymous           BIT               NN    -- HR sees the answers without the respondent; fixed once there are responses
+  published_at           DATETIME2(0)
+  published_by_user_id   BIGINT                    FK → auth.user_account
+  closed_at              DATETIME2(0)
+  closed_by_user_id      BIGINT                    FK → auth.user_account
+```
+
+```
+frm.form_section    -- a titled group of questions, in order
+  id            BIGINT IDENTITY   NN  PK
+  form_id       BIGINT            NN      FK → frm.form
+  sort_order    INT
+  title         NVARCHAR(200)     NN
+  description   NVARCHAR(MAX)
+```
+
+```
+frm.form_field    -- a question
+  id                BIGINT IDENTITY   NN  PK
+  form_id           BIGINT            NN      FK → frm.form
+  form_section_id   BIGINT                    FK → frm.form_section    -- optional: blank = before the first section
+  sort_order        INT    -- order in the whole form (position in its section is derived)
+  field_type        NVARCHAR(30)      NN    -- short_text, long_text, number, date, single_choice, multiple_choice, dropdown, checkbox, file, rating
+  label             NVARCHAR(500)     NN
+  help_text         NVARCHAR(1000)
+  is_required       BIT               NN
+  min_value         DECIMAL(18,4)    -- text: length; number: value; multiple_choice: picks
+  max_value         DECIMAL(18,4)    -- as min_value; rating: the scale (3 to 10)
+```
+
+```
+frm.form_field_option    -- the options of single_choice, multiple_choice and dropdown questions
+  id              BIGINT IDENTITY   NN  PK
+  form_field_id   BIGINT            NN      FK → frm.form_field
+  sort_order      INT
+  label           NVARCHAR(500)     NN
+```
+
+```
+frm.form_audience    -- who the form is for when audience_kind is not everyone
+  id          BIGINT IDENTITY   NN  PK
+  form_id     BIGINT            NN      FK → frm.form
+  unit_type   NVARCHAR(30)      NN    -- department (with sub-departments), branch, employee
+  unit_id     BIGINT            NN
+  UNIQUE (form_id, unit_type, unit_id)
+```
+
+```
+frm.form_response    -- one submission
+  id             BIGINT IDENTITY   NN  PK
+  company_id     BIGINT            NN      FK → org.company
+  form_id        BIGINT            NN      FK → frm.form
+  employee_id    BIGINT            NN      FK → hr.employee    -- kept for anonymous forms too; never shown to HR then
+  submitted_at   DATETIME2(0)      NN
+```
+
+```
+frm.form_answer    -- one answered question of a response; the column used depends on the type
+  id                 BIGINT IDENTITY   NN  PK
+  form_response_id   BIGINT            NN      FK → frm.form_response
+  form_field_id      BIGINT            NN      FK → frm.form_field
+  answer_text        NVARCHAR(MAX)    -- short_text, long_text
+  answer_number      DECIMAL(18,4)    -- number, rating
+  answer_date        DATE    -- date
+  answer_bool        BIT    -- checkbox
+  file_id            BIGINT                    FK → core.stored_file    -- file
+  UNIQUE (form_response_id, form_field_id)
+```
+
+```
+frm.form_answer_option    -- the chosen option(s) of a single_choice, dropdown or multiple_choice answer
+  form_answer_id         BIGINT            NN  PK  FK → frm.form_answer
+  form_field_option_id   BIGINT            NN  PK  FK → frm.form_field_option
+```
+
+Relationships:
+```
+form 1──* form_section / form_field / form_audience / form_response
+form_section 1──* form_field
+form_field 1──* form_field_option / form_answer
+form_response 1──* form_answer
+form_answer 1──* form_answer_option
+form_field_option 1──* form_answer_option
 ```
 
 ---

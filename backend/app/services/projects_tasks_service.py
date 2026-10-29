@@ -5,6 +5,8 @@ import json
 from datetime import date
 from typing import Any
 
+from pydantic import BaseModel
+
 from app.core.db import Db
 from app.middlewares.auth import RequestContext
 from app.repos import projects_tasks_repo
@@ -17,7 +19,7 @@ Rows = list[dict[str, Any]]
 COLUMN_FIELDS: dict[str, tuple[str, ...]] = {
     "assignees": ("assignees",),
     "start_date": ("start_date", "start_time"),
-    "due_date": ("due_date", "due_time", "original_due_date", "is_overdue", "recurrence"),
+    "due_date": ("due_date", "due_time", "original_due_date", "is_overdue", "recurrence", "latest_extension"),
     "priority": ("priority",),
     "tags": ("tags",),
     "dependencies": ("open_dependency_count", "blocking_count", "dependencies"),
@@ -28,7 +30,7 @@ COLUMN_FIELDS: dict[str, tuple[str, ...]] = {
     "date_created": ("created_at",),
     "date_closed": ("closed_at",),
     "latest_comment": ("latest_comment",),
-    "story_points": ("story_points_total", "rating"),
+    "story_points": ("story_points_total", "story_points_penalty", "story_points_effective", "rating"),
     "files": ("attachment_count",),
 }
 LIST_FIELDS = ("assignees", "tags", "dependencies")
@@ -52,6 +54,8 @@ def shape_task(row: dict[str, Any], hidden: list[str]) -> dict[str, Any]:
     body, author, at = out.pop("latest_comment_body", None), out.pop("latest_comment_author", None), \
         out.pop("latest_comment_at", None)
     out["latest_comment"] = {"body": body, "author_name": author, "created_at": at} if body is not None else None
+    ext_status, ext_due = out.pop("latest_extension_status", None), out.pop("latest_extension_new_due_date", None)
+    out["latest_extension"] = {"status": ext_status, "new_due_date": ext_due} if ext_status is not None else None
     for key in hidden:
         if key.startswith("cf_"):
             out["field_values"] = [v for v in out["field_values"] if f"cf_{v['custom_field_id']}" != key]
@@ -86,6 +90,7 @@ def list_tasks(db: Db, ctx: RequestContext, workspace_id: int, f: dict[str, Any]
         "created_by_ids": _csv(f.get("created_by_ids")), "task_type": f.get("task_type"),
         "due_from": f.get("due_from"), "due_to": f.get("due_to"), "start_from": f.get("start_from"),
         "start_to": f.get("start_to"), "overdue_only": f.get("overdue_only", False),
+        "has_location": f.get("has_location", False),
         "subtasks": f.get("subtasks", "expanded"), "group_by": f.get("group_by", "status"),
         "sort_by": f.get("sort_by", "manual"), "sort_dir": f.get("sort_dir", "asc"),
     }
@@ -151,9 +156,12 @@ def delete_task(db: Db, ctx: RequestContext, task_id: int, row_version: bytes) -
 
 
 def field_value_text(value: Any) -> str | None:
-    """Custom field values are stored as text: true / false, numbers, JSON arrays for labels and people."""
+    """Custom field values are stored as text: true / false, numbers, JSON arrays for labels and people, a JSON
+    object {address, lat, lng} for a location."""
     if value is None:
         return None
+    if isinstance(value, BaseModel):
+        return json.dumps(value.model_dump(by_alias=False))
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, list):

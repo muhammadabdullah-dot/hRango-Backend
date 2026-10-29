@@ -95,10 +95,25 @@ class AttachmentIn(ApiModel):
     file_id: int
 
 
+StorageProvider = Literal["google_drive", "dropbox", "box", "onedrive"]
+
+
+class AttachmentLinkIn(ApiModel):
+    """A file in external storage, picked through /api/integrations/storage/{provider}/files."""
+    provider: StorageProvider
+    external_id: str = Field(min_length=1, max_length=500)
+    name: str = Field(min_length=1, max_length=255)
+    web_url: str = Field(min_length=9, max_length=2000)
+    mime_type: str | None = Field(None, max_length=100)
+    size_bytes: int | None = Field(None, ge=0)
+
+
 class AttachmentOut(ApiModel):
+    """An uploaded file, or (provider set, id "link-<n>") a link to a file in external storage."""
     id: str
     task_id: str
-    file_id: str
+    # Null for a link to external storage.
+    file_id: str | None
     name: str
     mime_type: str | None
     size_bytes: int | None
@@ -106,8 +121,11 @@ class AttachmentOut(ApiModel):
     uploaded_by_user_id: str | None
     uploaded_by_name: str | None
     created_at: datetime
-    # Signed download link (expires).
+    # Signed download link (expires); for a link, the file's address at the provider.
     url: str
+    provider: str | None = None
+    external_id: str | None = None
+    web_url: str | None = None
 
 
 # --------------------------------------------------------------------------- time

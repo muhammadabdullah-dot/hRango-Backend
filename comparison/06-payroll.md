@@ -47,10 +47,20 @@ wages summary reports (built), voucher Rejected status (built), tax rebates feed
 
 Not in the first build (documents silent or open questions): arrears (`arrearApplicable` stored, no
 calculation: a back-dated revision is refused once that month is closed), reopening a closed payroll (FRD:
-irreversible; OQ E2), approval before close (OQ E3), bank transfer file (E4), posting to finance ledgers (E5),
-multi-currency conversion (E7; currency stored per run), statutory returns (E1), e-mails on close and
-revision (no mail service yet), scheduled processing by Processing Date (stored; runs are on demand),
-sales incentive calculation (no sales data), cut-off proration and revision by fixed / shift days (stored).
+irreversible; OQ E2), approval before close (OQ E3), bank-specific transfer layouts (E4; the generic CSV / TXT
+file is built, below), posting to finance ledgers (E5), multi-currency conversion (E7; currency stored per run),
+statutory returns (E1), actually sending e-mail (no mail service yet; the e-mails are recorded, below),
+scheduled processing by Processing Date (stored; runs are on demand), sales incentive calculation (no sales
+data), cut-off proration and revision by fixed / shift days (stored).
+
+## Frontend dependencies P1-P4 (frontend/docs/backend-dependencies.md), built as a gray structure
+
+| Item | Endpoints (permission) | How | Left as TODO |
+|---|---|---|---|
+| P1 Close e-mail | `GET /payrolls/{id}/close-email/preview` (`payroll.payrolls.view`) -> `{enabled, subject, bodyHtml, recipientCount}`; `POST /payrolls/{id}/close` (`close`) now answers `email: {status, sentCount, failedCount}` (null for daily wages); `GET /payrolls/{id}/close-email` (`view`) -> `{status, queuedAt, sentAt, recipientCount, sentCount, failedCount, failures[]}` | `pay.usp_payroll_close` records `pay.payroll_close_email` in the close's transaction (`disabled` while `app.core.mail.enabled()` is false, else `queued`) and one `pay.mail_outbox` row per person with a released payslip and an e-mail address (`pay.fn_employee_email`: employee e-mail, else their account's). Status is `none` before the close. Subject/body: built-in plain template (`app/services/payroll_mail_service.py`) | the mail sender (deliver queued rows, mark sent / failed, set the run's status and `sent_at`); company-editable templates and the two e-mail options of Settings -> General |
+| P2 Salary revision letter | `GET /salary-revisions/{id}/email/preview` (`payroll.salary_revision.view`) -> `{subject, bodyHtml, to}`; `POST /salary-revisions/{id}/email {rowVersion}` (new action `payroll.salary_revision.send`) -> `{status, sentAt}`; `SalaryRevisionOut.emailStatus` (`none, queued, sent, failed, disabled`) and `emailedAt` | rowVersion is the revision's (409 when stale). Each request adds a `pay.mail_outbox` row (entity `hr.employee_salary`; no FK, hr owns and may delete the row); status `disabled` while mail is off, else `queued` (422 `to` when the person has no address; 409 `EMAIL_QUEUED` when one is already waiting). The latest row gives `emailStatus`; `emailedAt` is its `sent_at`. Deleting a revision here withdraws its unsent rows | sending; an attachment (PDF letter) |
+| P3 Bank transfer file | `GET /bank-file-formats` (`payroll.payrolls.export` or `payroll.daily_wages.export`) -> `csv` Generic CSV, `txt` Generic fixed width; `GET /payrolls/{id}/bank-file?disbursementBankId&format` (`payroll.payrolls.export`) and `GET /daily-wages/{id}/bank-file` (`payroll.daily_wages.export`): attachment, `text/csv` / `text/plain` declared in OpenAPI | `pay.usp_payroll_bank_file`: 409 `PAYROLL_NOT_CLOSED` until closed; the bank defaults to the run's and must be the run's (any company bank for daily wages, which name none; 422 `disbursementBankId`); rows = bank-paid payslips not on hold with net pay > 0, the person's primary bank account, net pay. Unknown format: 422 `format` | bank-specific layouts; xlsx (no spreadsheet library installed, not listed); a per-person disbursement bank (a run is paid through one bank) |
+| P4 Leave encashment preview | `POST /leave-encashments/preview {leaveTypeId, fiscalYear, allEmployees, employeeIds, basis, amountPerLeave, id?}` (`payroll.leave_encashment.create` or `edit`) -> `[{employeeId, employeeName, availableDays, encashableDays, cappedBy, amount}]` | `pay.usp_leave_encashment_preview`, same rules as saving without writing; `id` (edit) gives the encashment's own days back. Save already applied the spec's limits (type off -> 422 `leaveTypeId`; under `encashmentMin` left out; above `encashmentMax` paid for the max; nobody left -> 422 `employeeIds`); only change: the "nobody left" message now says why (below the minimum / no salary) | share the balance rule between preview and save (now duplicated); `/api/leaves/encashments` (leaves module, `lv.usp_leave_encashment_save`) is not changed |
 
 ## ERD changes (erd/source/09-pay.md)
 
@@ -75,6 +85,9 @@ sales incentive calculation (no sales data), cut-off proration and revision by f
   `file_id`, `remarks`, type `daily_wage`; `decided_by_user_id` (who approved or rejected) and
   `verified_by_user_id` (who verified), FK user_account, so the decider is kept when the account has no
   employee record.
+- New **payroll_close_email** (one per closed monthly run: status, recipient_count, queued_at, sent_at) and
+  **mail_outbox** (one row per person and e-mail: entity_type / entity_id, employee, address, subject, status
+  disabled / queued / sent / failed, queued_at, sent_at, error) for P1 and P2.
 
 ## Decisions on unclear points
 

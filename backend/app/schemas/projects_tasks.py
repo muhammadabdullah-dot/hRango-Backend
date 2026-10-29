@@ -99,9 +99,17 @@ class RowVersionIn(ApiModel):
     row_version: str | None = None
 
 
+class LocationValueIn(ApiModel):
+    """A location custom field's value (Map view)."""
+    address: str = Field(min_length=1, max_length=500)
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
 class FieldValueIn(ApiModel):
-    """Text, a number, true / false, or a list (labels: option names; people: employee ids). null clears."""
-    value: str | int | float | bool | list[str | int] | None = None
+    """Text, a number, true / false, a list (labels: option names; people: employee ids), or a location
+    {address, lat, lng}. null clears."""
+    value: str | int | float | bool | list[str | int] | LocationValueIn | None = None
 
 
 class DependencyIn(ApiModel):
@@ -151,6 +159,11 @@ class LatestCommentOut(ApiModel):
     created_at: datetime
 
 
+class LatestExtensionOut(ApiModel):
+    status: str
+    new_due_date: date
+
+
 class TaskRowOut(ApiModel):
     """A task as the List view draws it. Columns the caller may not see (Private Field) come back
     null or empty and are named in hiddenColumns."""
@@ -178,6 +191,9 @@ class TaskRowOut(ApiModel):
     time_estimate_minutes: int | None
     time_tracked_minutes: int | None
     story_points_total: int | None
+    # Overdue settings: points taken off a task closed late (0 when on time, null without story points).
+    story_points_penalty: float | None = None
+    story_points_effective: float | None = None
     rating: int | None
     url: str | None
     recurrence: dict[str, Any] | None
@@ -197,6 +213,8 @@ class TaskRowOut(ApiModel):
     checklist_count: int
     checklist_done_count: int
     latest_comment: LatestCommentOut | None
+    # The newest extension request (Overdue tab), or null.
+    latest_extension: LatestExtensionOut | None = None
     assignees: list[AssigneeOut]
     tags: list[TagRefOut]
     field_values: list[FieldValueOut]

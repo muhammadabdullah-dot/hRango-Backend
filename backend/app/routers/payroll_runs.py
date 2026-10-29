@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from app.controllers import payroll_runs_controller as c
 from app.core.db import Db, get_db
 from app.core.paging import PageParams, page_params
-from app.middlewares.auth import RequestContext, require
+from app.middlewares.auth import RequestContext, require, require_any
 from app.schemas.common import Item, Paginated
-from app.schemas.payroll_runs import (AccountSummaryOut, ChangedOut, CreatedOut, DailyWageEditIn, DailyWageIn,
-                                      DailyWageOut, EmployeeCountOut, EmployeeFilterIn, EmployeeIdsIn, IdsIn,
+from app.schemas.payroll_runs import (AccountSummaryOut, BankFileFormatOut, ChangedOut, CloseEmailOut,
+                                      CloseEmailPreviewOut, CreatedOut, DailyWageEditIn, DailyWageIn, DailyWageOut,
+                                      EmployeeCountOut, EmployeeFilterIn, EmployeeIdsIn, IdsIn, PayrollClosedOut,
                                       PayrollEmployeeOut, PayrollIn, PayrollOut, PayslipDetailOut, PayslipEditIn,
                                       PayslipHistoryOut, PayslipOut, RowVersionIn, RunErrorOut, RunLogOut,
                                       SalarySheetOut)
@@ -19,6 +20,10 @@ router = APIRouter()
 NO_CONTENT = status.HTTP_204_NO_CONTENT
 CREATED = status.HTTP_201_CREATED
 RV = Query(None, alias="rowVersion")
+BANK_FILE = {200: {"description": "The bank transfer file (Content-Disposition: attachment).",
+                   "content": {"text/csv": {"schema": {"type": "string", "format": "binary"}},
+                               "text/plain": {"schema": {"type": "string", "format": "binary"}}}},
+             409: {"description": "PAYROLL_NOT_CLOSED: the run is not closed yet."}}
 
 
 # --------------------------------------------------------------------------- monthly payrolls
@@ -77,10 +82,33 @@ def run_payroll(id: int, db: Db = Depends(get_db), ctx: RequestContext = Depends
     return c.run(db, ctx, id)
 
 
-@router.post("/payrolls/{id}/close", response_model=Item[PayrollOut])
+@router.post("/payrolls/{id}/close", response_model=Item[PayrollClosedOut])
 def close_payroll(id: int, body: RowVersionIn, db: Db = Depends(get_db),
                   ctx: RequestContext = Depends(require("payroll.payrolls.close"))):
     return c.close(db, ctx, id, "monthly", body)
+
+
+@router.get("/payrolls/{id}/close-email/preview", response_model=Item[CloseEmailPreviewOut])
+def close_email_preview(id: int, db: Db = Depends(get_db),
+                        ctx: RequestContext = Depends(require("payroll.payrolls.view"))):
+    """The e-mail closing the run sends to each person with a released payslip. `enabled` is false while mail
+    is not set up (closing then sends nothing)."""
+    return c.close_email_preview(db, ctx, id)
+
+
+@router.get("/payrolls/{id}/close-email", response_model=Item[CloseEmailOut])
+def close_email(id: int, db: Db = Depends(get_db), ctx: RequestContext = Depends(require("payroll.payrolls.view"))):
+    """The close e-mail's state: none (not closed), disabled (mail not set up), queued, sent, failed."""
+    return c.close_email(db, ctx, id)
+
+
+@router.get("/payrolls/{id}/bank-file", response_class=Response, responses=BANK_FILE)
+def payroll_bank_file(id: int, disbursement_bank_id: int | None = Query(None, alias="disbursementBankId"),
+                      fmt: str | None = Query(None, alias="format"), db: Db = Depends(get_db),
+                      ctx: RequestContext = Depends(require("payroll.payrolls.export"))):
+    """Bank transfer file of a closed run: net pay per person paid through the disbursement bank (the run's
+    own when not given). 409 PAYROLL_NOT_CLOSED before the run is closed."""
+    return c.bank_file(db, ctx, id, "monthly", disbursement_bank_id, fmt)
 
 
 @router.post("/payrolls/{id}/hold", response_model=Item[PayrollOut])
@@ -150,7 +178,7 @@ def process_daily_wage(id: int, db: Db = Depends(get_db),
     return c.process_daily_wage(db, ctx, id)
 
 
-@router.post("/daily-wages/{id}/close", response_model=Item[PayrollOut])
+@router.post("/daily-wages/{id}/close", response_model=Item[PayrollClosedOut])
 def close_daily_wage(id: int, body: RowVersionIn, db: Db = Depends(get_db),
                      ctx: RequestContext = Depends(require("payroll.daily_wages.close"))):
     return c.close(db, ctx, id, "daily_wage", body)
@@ -160,6 +188,20 @@ def close_daily_wage(id: int, body: RowVersionIn, db: Db = Depends(get_db),
 def daily_wage_vouchers(id: int, db: Db = Depends(get_db),
                         ctx: RequestContext = Depends(require("payroll.vouchers.create"))):
     return c.daily_wage_vouchers(db, ctx, id)
+
+
+@router.get("/daily-wages/{id}/bank-file", response_class=Response, responses=BANK_FILE)
+def daily_wage_bank_file(id: int, disbursement_bank_id: int | None = Query(None, alias="disbursementBankId"),
+                         fmt: str | None = Query(None, alias="format"), db: Db = Depends(get_db),
+                         ctx: RequestContext = Depends(require("payroll.daily_wages.export"))):
+    """Bank transfer file of a closed daily-wages run. 409 PAYROLL_NOT_CLOSED before it is closed."""
+    return c.bank_file(db, ctx, id, "daily_wage", disbursement_bank_id, fmt)
+
+
+@router.get("/bank-file-formats", response_model=Item[list[BankFileFormatOut]])
+def bank_file_formats(ctx: RequestContext = Depends(require_any("payroll.payrolls.export",
+                                                                 "payroll.daily_wages.export"))):
+    return c.bank_file_formats()
 
 
 @router.get("/daily-wages/{id}/errors", response_model=Item[list[RunErrorOut]])

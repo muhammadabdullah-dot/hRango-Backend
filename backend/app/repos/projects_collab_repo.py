@@ -57,6 +57,17 @@ def delete_attachment(db: Db, company_id: int, actor_user_id: int, attachment_id
     db.call("pm.usp_task_attachment_delete", company_id=company_id, actor_user_id=actor_user_id, id=attachment_id)
 
 
+def add_attachment_link(db: Db, company_id: int, actor_user_id: int, task_id: int, provider: str, external_id: str,
+                        name: str, web_url: str, mime_type: str | None, size_bytes: int | None) -> dict[str, Any]:
+    return db.call_one("pm.usp_task_attachment_link_add", company_id=company_id, actor_user_id=actor_user_id,
+                       task_id=task_id, provider=provider, external_id=external_id, name=name, web_url=web_url,
+                       mime_type=mime_type, size_bytes=size_bytes)
+
+
+def delete_attachment_link(db: Db, company_id: int, actor_user_id: int, link_id: int) -> None:
+    db.call("pm.usp_task_attachment_link_delete", company_id=company_id, actor_user_id=actor_user_id, id=link_id)
+
+
 # --------------------------------------------------------------------------- time
 
 def list_time_entries(db: Db, company_id: int, actor_user_id: int, task_id: int) -> Rows:
@@ -103,6 +114,11 @@ def save_reminder(db: Db, company_id: int, actor_user_id: int, reminder_id: int 
 
 def delete_reminder(db: Db, company_id: int, actor_user_id: int, reminder_id: int) -> None:
     db.call("pm.usp_reminder_delete", company_id=company_id, actor_user_id=actor_user_id, id=reminder_id)
+
+
+def deliver_due_reminders(db: Db, company_id: int | None, now: datetime | None) -> int:
+    row = db.call_one("pm.usp_reminder_deliver_due", company_id=company_id, now=now)
+    return int(row["delivered"]) if row else 0
 
 
 # --------------------------------------------------------------------------- sharing

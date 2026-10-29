@@ -7,7 +7,8 @@ ACTION_LABELS = {
     "cancel": "Cancel", "download": "Download", "print": "Print", "verify": "Verify",
     "submit": "Submit", "enroll": "Enroll", "clock": "Clock in and out",
     "publish": "Publish", "respond": "Respond", "evaluate": "Evaluate", "hire": "Hire", "complete": "Complete",
-    "forward": "Forward", "reimburse": "Reimburse",
+    "forward": "Forward", "reimburse": "Reimburse", "generate": "Generate with AI", "send": "Send",
+    "archive": "Archive",
 }
 
 CRUD = ("view", "create", "edit", "delete", "export")

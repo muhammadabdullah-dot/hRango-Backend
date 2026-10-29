@@ -6,25 +6,44 @@ CREATE OR ALTER PROCEDURE [pm].[usp_task_attachment_list]
     @company_id    BIGINT,
     @actor_user_id BIGINT,
     @task_id       BIGINT = NULL,
-    @id            BIGINT = NULL
+    @id            BIGINT = NULL,
+    @link_id       BIGINT = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
 
     IF @id IS NOT NULL
         SET @task_id = (SELECT entity_id FROM [core].[attachment] WHERE id = @id AND company_id = @company_id AND entity_type = N'pm.task');
+    IF @link_id IS NOT NULL
+        SET @task_id = (SELECT task_id FROM [pm].[task_external_file] WHERE id = @link_id AND company_id = @company_id);
     IF NOT EXISTS (SELECT 1 FROM [pm].[fn_task_access](@company_id, @actor_user_id) WHERE task_id = @task_id)
         THROW 50404, N'Task not found', 1;
 
-    SELECT a.id, a.entity_id AS task_id, f.id AS file_id, f.name, f.mime_type, f.size_bytes, a.created_by AS uploaded_by_user_id,
-           COALESCE(NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' '), u.display_name, u.email) AS uploaded_by_name,
-           a.created_at
-    FROM [core].[attachment] a
-    JOIN [core].[stored_file] f ON f.id = a.file_id
-    LEFT JOIN [auth].[user_account] u ON u.id = a.created_by
-    LEFT JOIN [hr].[employee] e ON e.id = u.employee_id
-    WHERE a.company_id = @company_id AND a.entity_type = N'pm.task' AND a.entity_id = @task_id AND (@id IS NULL OR a.id = @id)
-    ORDER BY a.created_at, a.id;
+    -- Uploaded files (core.attachment), then links to external storage (pm.task_external_file, id "link-<id>").
+    SELECT r.id, r.task_id, r.file_id, r.name, r.mime_type, r.size_bytes, r.uploaded_by_user_id, r.uploaded_by_name, r.created_at,
+           r.provider, r.external_id, r.web_url
+    FROM (
+        SELECT CONVERT(NVARCHAR(30), a.id) AS id, a.entity_id AS task_id, f.id AS file_id, f.name, f.mime_type, f.size_bytes,
+               a.created_by AS uploaded_by_user_id,
+               COALESCE(NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' '), u.display_name, u.email) AS uploaded_by_name,
+               a.created_at, CAST(NULL AS NVARCHAR(30)) AS provider, CAST(NULL AS NVARCHAR(500)) AS external_id,
+               CAST(NULL AS NVARCHAR(2000)) AS web_url, 0 AS kind_sort, a.id AS sort_id
+        FROM [core].[attachment] a
+        JOIN [core].[stored_file] f ON f.id = a.file_id
+        LEFT JOIN [auth].[user_account] u ON u.id = a.created_by
+        LEFT JOIN [hr].[employee] e ON e.id = u.employee_id
+        WHERE a.company_id = @company_id AND a.entity_type = N'pm.task' AND a.entity_id = @task_id AND @link_id IS NULL
+          AND (@id IS NULL OR a.id = @id)
+        UNION ALL
+        SELECT CONCAT(N'link-', x.id), x.task_id, NULL, x.name, x.mime_type, x.size_bytes, x.created_by,
+               COALESCE(NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' '), u.display_name, u.email),
+               x.created_at, x.provider, x.external_id, x.web_url, 1, x.id
+        FROM [pm].[task_external_file] x
+        LEFT JOIN [auth].[user_account] u ON u.id = x.created_by
+        LEFT JOIN [hr].[employee] e ON e.id = u.employee_id
+        WHERE x.company_id = @company_id AND x.task_id = @task_id AND @id IS NULL AND (@link_id IS NULL OR x.id = @link_id)
+    ) r
+    ORDER BY r.created_at, r.kind_sort, r.sort_id;
 END
 GO
 
@@ -97,6 +116,88 @@ BEGIN
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;
         DELETE [core].[attachment] WHERE id = @id;
+        INSERT [core].[audit_log] (entity_type, entity_id, field_name, old_value, action_name, performed_by_user_id, performed_at)
+        VALUES (N'pm.task', @task_id, N'attachment', @name, N'detach', @actor_user_id, @now);
+    COMMIT;
+END
+GO
+
+-- Attaches a link to a file in external storage (Google Drive, Dropbox, Box, OneDrive). Same rules as
+-- attaching an uploaded file. The provider connection is not checked here (no OAuth yet).
+CREATE OR ALTER PROCEDURE [pm].[usp_task_attachment_link_add]
+    @company_id    BIGINT,
+    @actor_user_id BIGINT,
+    @task_id       BIGINT,
+    @provider      NVARCHAR(30),
+    @external_id   NVARCHAR(500),
+    @name          NVARCHAR(255),
+    @web_url       NVARCHAR(2000),
+    @mime_type     NVARCHAR(100) = NULL,
+    @size_bytes    BIGINT = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @ws BIGINT, @rank INT, @me BIGINT;
+    SELECT @ws = workspace_id, @rank = role_rank, @me = employee_id FROM [pm].[fn_task_access](@company_id, @actor_user_id) WHERE task_id = @task_id;
+    IF @ws IS NULL
+        THROW 50404, N'Task not found', 1;
+    IF @rank < 2 AND NOT (@rank >= 1 AND (EXISTS (SELECT 1 FROM [pm].[task] WHERE id = @task_id AND created_by = @actor_user_id)
+                                          OR EXISTS (SELECT 1 FROM [pm].[task_assignee] WHERE task_id = @task_id AND employee_id = @me)))
+        THROW 50403, N'Only team leaders and above, the creator or the assignees can attach files.', 1;
+    IF EXISTS (SELECT 1 FROM [pm].[fn_column_levels](@ws, @me) WHERE column_key = N'files' AND permission_level IN (N'can_view', N'private'))
+        THROW 50403, N'You can view but not change the files (column permission).', 1;
+
+    SET @name = NULLIF(LTRIM(RTRIM(@name)), N'');
+    SET @external_id = NULLIF(LTRIM(RTRIM(@external_id)), N'');
+    IF @provider IS NULL OR @provider NOT IN (N'google_drive', N'dropbox', N'box', N'onedrive')
+        THROW 50400, N'provider|Choose Google Drive, Dropbox, Box or OneDrive.', 1;
+    IF @external_id IS NULL
+        THROW 50400, N'externalId|The file id is missing.', 1;
+    IF @name IS NULL
+        THROW 50400, N'name|The file name is missing.', 1;
+    IF @web_url IS NULL OR @web_url NOT LIKE N'https://_%'
+        THROW 50400, N'webUrl|A link must begin with https://.', 1;
+    IF EXISTS (SELECT 1 FROM [pm].[task_external_file] WHERE task_id = @task_id AND provider = @provider AND external_id = @external_id)
+        THROW 50409, N'externalId|FILE_DUPLICATE|This file is already attached to the task.', 1;
+
+    DECLARE @id BIGINT, @now DATETIME2(0) = SYSUTCDATETIME();
+    BEGIN TRAN;
+        INSERT [pm].[task_external_file] (company_id, task_id, provider, external_id, name, web_url, mime_type, size_bytes, created_by)
+        VALUES (@company_id, @task_id, @provider, @external_id, @name, @web_url, @mime_type, @size_bytes, @actor_user_id);
+        SET @id = SCOPE_IDENTITY();
+        UPDATE [pm].[task] SET updated_at = @now, updated_by = @actor_user_id WHERE id = @task_id;
+        INSERT [core].[audit_log] (entity_type, entity_id, field_name, new_value, action_name, performed_by_user_id, performed_at)
+        VALUES (N'pm.task', @task_id, N'attachment', @name, N'attach', @actor_user_id, @now);
+    COMMIT;
+
+    EXEC [pm].[usp_task_attachment_list] @company_id = @company_id, @actor_user_id = @actor_user_id, @link_id = @id;
+END
+GO
+
+-- Removes a link attachment: whoever attached it, or managers and above.
+CREATE OR ALTER PROCEDURE [pm].[usp_task_attachment_link_delete]
+    @company_id    BIGINT,
+    @actor_user_id BIGINT,
+    @id            BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    DECLARE @task_id BIGINT, @attacher BIGINT, @name NVARCHAR(255);
+    SELECT @task_id = task_id, @attacher = created_by, @name = name FROM [pm].[task_external_file] WHERE id = @id AND company_id = @company_id;
+    DECLARE @ws BIGINT, @rank INT;
+    SELECT @ws = workspace_id, @rank = role_rank FROM [pm].[fn_task_access](@company_id, @actor_user_id) WHERE task_id = @task_id;
+    IF @ws IS NULL
+        THROW 50404, N'Attachment not found', 1;
+    IF @rank < 3 AND NOT (@rank >= 1 AND @attacher = @actor_user_id)
+        THROW 50403, N'Only whoever attached the file, or a manager, can remove it.', 1;
+
+    DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
+    BEGIN TRAN;
+        DELETE [pm].[task_external_file] WHERE id = @id;
         INSERT [core].[audit_log] (entity_type, entity_id, field_name, old_value, action_name, performed_by_user_id, performed_at)
         VALUES (N'pm.task', @task_id, N'attachment', @name, N'detach', @actor_user_id, @now);
     COMMIT;

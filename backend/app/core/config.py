@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     # runs as its own service instead (and in tests).
     webhook_worker: bool = True
     webhook_poll_seconds: int = 5
+    # Writing with AI (request applications, project docs, task suggestions). Blank = off: those routes
+    # answer 503 AI_UNAVAILABLE and the screens keep their manual editors.
+    ai_provider: str = ""
+    # Sending mail (payroll close, salary revisions, share invitations). Off until SMTP is set up: mails
+    # are not sent and their status reads "disabled".
+    mail_enabled: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:

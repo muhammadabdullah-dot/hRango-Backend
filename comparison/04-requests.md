@@ -276,6 +276,51 @@ Entity `req.request`. Every notification is also published as `notification.crea
 - In neither: escalation, delegation dates, edit after approval, requisition fulfilment tracking, multi-currency
   claims (claims are in the company currency).
 
+## Frontend dependencies R1-R4 and the overtime gaps (gray structure, Oct 2026)
+
+From `frontend/docs/backend-dependencies.md` (Requests) and `backend-mapping/attendance-overtime.md` (Gaps both ways).
+Tests: `backend/tests/test_requests_extras.py`.
+
+Built:
+- **R1** `POST /api/requests/{type}/application/generate` (`GenerateApplicationIn` -> `{data: {text, generatedAt}}`),
+  guarded by the type's `.create` code. Calls `app.core.ai.ensure_available()` first, so it answers **503
+  AI_UNAVAILABLE** while no model is connected; 422 when the form is empty.
+- **R2** `CancelIn` + optional `dates[]`, `startTime`, `endTime` on `POST /requests/{type}/{id}/cancel` and
+  `POST /requests/approvals/{id}/cancel`. Work from home only (422 `dates` for other types: in Python on the type
+  route, in `req.usp_request_cancel` on the Approvals route); dates must lie within the request, end after start.
+  Stored on `req.request` (`cancel_dates` JSON, `cancel_start_time`, `cancel_end_time`) and returned as
+  `cancelDates`, `cancelStartTime`, `cancelEndTime` on every request.
+- **R3** `?flowStep=<approver kind or authority>` on every `/requests/{type}` list (and its export) and on
+  `/requests/approvals`: requests with a pending step of that `approver_kind`. Unknown values 422.
+- **R4** every `/requests/{type}/export` declares `200 text/csv` (no JSON) and sends
+  `Content-Disposition: attachment; filename="<type>-<yyyy-MM-dd>.csv"`, UTF-8, header line then one row per
+  request (every page). Overtime adds Overtime date, Start / End time, Applied / Approved minutes, Type, Bulk,
+  Location, Branch. `requests.overtime.view|create|cancel|export` are in the catalogue.
+- **Bulk overtime** `POST /api/requests/overtime/bulk` (`requests.overtime.create`)
+  `{employeeIds[], overtimeType: mandatory|voluntary, fromDate, toDate?, reason, description?, attachments[], details}`
+  -> 201 `{data: {bulkId, overtimeType, count, requests[]}}`. One request per person on their behalf, all or
+  nothing: each person is tried first (filed and rolled back) so every refusal is reported at once
+  (422 `BULK_REFUSED`, `fieldErrors["employeeIds.<id>"]`), then all are filed in one transaction with a
+  `req.request_bulk` row. One day only (`toDate` must equal `fromDate`). `?bulk=true|false` filters the lists.
+- **Overtime output typed**: `OvertimeDetailsOut` on the overtime routes (list, get, create, edit, cancel):
+  department / location / branch ids and names, date, times, applied / approved minutes, `overtimeType`,
+  `isBulk`, `bulkId`, and the policy an approval fell under (`overtimePolicyId`, `overtimePolicyName`,
+  `slabMinMinutes`, `slabMaxMinutes`, `encashmentType`, `encashmentLeaveTypeId`, `encashmentLeaveTypeName`).
+- **Bulk approve with details**: `BulkItemIn.details` (the single approve's `ApprovalDetailsIn`, e.g.
+  `approvedMinutes`) is passed to `req.usp_request_decide` per item; what is left out is prefilled as before.
+- **Policy usage**: see 03-attendance.md (`usageCount`, 409 `IN_USE`).
+
+TODO (left on purpose):
+- R1: no model call; prompt, employee scope check and HTML clean-up are marked `TODO(R1)` in
+  `requests_service.generate_application`.
+- R2: what cancelling a WFH day "from-to a time" means is an open product question; the values change nothing
+  (the whole request is cancelled as before). `TODO(R2)` in `usp_request_cancel` and `requests_service.cancel`.
+- Bulk overtime: attachments are linked to every request; no bulk edit / bulk cancel; the trial pass costs two
+  submits per person (fine up to the 100-person limit).
+- Overtime policy: the policy is the company's first active **daily** policy whose slab holds the minutes;
+  policies are not assigned to people, monthly policies, capping by the top slab and encashment are not done
+  (`TODO(overtime policy)` in `att.usp_request_apply_overtime`).
+
 ## ERD changes (07-req.md, 08-loan.md)
 
 - `request_type`: added `kind`, `prefix`, `is_admin_only`, `sort_order`; `UNIQUE (code)`; codes as above
@@ -303,6 +348,11 @@ Entity `req.request`. Every notification is also published as `notification.crea
   `expression`), `step_no {NN}`, `UNIQUE (approval_flow_id, step_no)`.
 - New `approval_authority` (who holds HR Manager, Finance Manager ... per type / branch / department).
 - `request_step`: + `approver_role_id`, `is_consent`; `action_taken {NN}` with the event values.
+- `request`: + `cancel_dates {NVARCHAR(MAX)}`, `cancel_start_time`, `cancel_end_time` (WFH cancellation, R2).
+- `req_overtime` (now one column per line): + `overtime_type`, `bulk_id FK request_bulk`, `overtime_policy_id FK
+  overtime_policy`, `slab_min_minutes`, `slab_max_minutes`, `encashment_type`, `encashment_leave_type_id FK leave_type`
+  (the slab is copied: policy edits replace slabs).
+- New `request_bulk` (company_id, request_type_id, request_count, reason): requests filed together.
 - 08-loan: `loan_type.description`, `UNIQUE (company_id, name)`; `loan_category.description`, unique
   name; `loan` + `company_id`, `loan_category_id`, `gap_between_installments_months`, `currency`,
   `payment_method`, `settled_at`, `UNIQUE (request_id)`, status `non_payable`; `loan_installment` +

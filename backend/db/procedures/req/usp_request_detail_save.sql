@@ -254,7 +254,14 @@ BEGIN
                 @o_date DATE = COALESCE(TRY_CAST(JSON_VALUE(@d, N'$.overtime_date') AS DATE), @from),
                 @o_start TIME(0) = TRY_CAST(JSON_VALUE(@d, N'$.start_time') AS TIME(0)),
                 @o_end TIME(0) = TRY_CAST(JSON_VALUE(@d, N'$.end_time') AS TIME(0)),
-                @o_applied INT = TRY_CAST(JSON_VALUE(@d, N'$.applied_minutes') AS INT), @o_span INT;
+                @o_applied INT = TRY_CAST(JSON_VALUE(@d, N'$.applied_minutes') AS INT), @o_span INT,
+                @o_type NVARCHAR(30) = NULLIF(JSON_VALUE(@d, N'$.overtime_type'), N''),
+                -- Set only by the bulk filing (the API never takes it from a form); kept on edit.
+                @o_bulk BIGINT = TRY_CAST(JSON_VALUE(@d, N'$.bulk_id') AS BIGINT);
+        IF @o_type IS NOT NULL AND @o_type NOT IN (N'mandatory', N'voluntary')
+            THROW 50400, N'overtimeType|Type must be mandatory or voluntary.', 1;
+        IF @o_bulk IS NOT NULL AND NOT EXISTS (SELECT 1 FROM [req].[request_bulk] WHERE id = @o_bulk AND company_id = @company_id)
+            THROW 50400, N'bulkId|Bulk filing not found.', 1;
         IF @o_dept IS NULL OR NOT EXISTS (SELECT 1 FROM [org].[department] WHERE id = @o_dept AND company_id = @company_id)
             THROW 50400, N'departmentId|Department is required.', 1;
         IF @o_loc IS NOT NULL AND NOT EXISTS (SELECT 1 FROM [org].[location] WHERE id = @o_loc AND company_id = @company_id)
@@ -277,12 +284,14 @@ BEGIN
         IF EXISTS (SELECT 1 FROM [req].[req_overtime] WHERE request_id = @request_id)
             UPDATE [req].[req_overtime]
             SET department_id = @o_dept, location_id = @o_loc, branch_id = @o_branch, overtime_date = @o_date,
-                start_time = @o_start, end_time = @o_end, applied_minutes = @o_applied, updated_at = @now, updated_by = @actor_user_id
+                start_time = @o_start, end_time = @o_end, applied_minutes = @o_applied,
+                overtime_type = COALESCE(@o_type, overtime_type), updated_at = @now, updated_by = @actor_user_id
             WHERE request_id = @request_id;
         ELSE
             INSERT [req].[req_overtime] (request_id, department_id, location_id, branch_id, overtime_date, start_time, end_time,
-                                         applied_minutes, created_by)
-            VALUES (@request_id, @o_dept, @o_loc, @o_branch, @o_date, @o_start, @o_end, @o_applied, @actor_user_id);
+                                         applied_minutes, overtime_type, bulk_id, created_by)
+            VALUES (@request_id, @o_dept, @o_loc, @o_branch, @o_date, @o_start, @o_end, @o_applied, @o_type, @o_bulk,
+                    @actor_user_id);
         SELECT @from = @o_date, @to = @o_date, @days = 1;
     END
 

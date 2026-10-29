@@ -1,7 +1,7 @@
 """Requests data access. The only layer that knows the req.* procedure names and parameters.
 Procedures that write and may run another module's hook (submit, decide, cancel) return nothing
 the caller relies on except their last result set; the service reads the request again after."""
-from datetime import date
+from datetime import date, time
 from typing import Any
 
 from app.core.db import Db
@@ -21,7 +21,8 @@ def list_requests(db: Db, company_id: int, actor_user_id: int, type_code: str, p
         "req.usp_request_list", company_id=company_id, actor_user_id=actor_user_id, type_code=type_code,
         permission_code=permission_code, view=f["view"], status=f["status"], search=f["search"],
         employee_id=f["employee_id"], department_id=f["department_id"], branch_id=f["branch_id"],
-        location_id=f["location_id"], date_from=f["date_from"], date_to=f["date_to"], page=page, page_size=page_size)
+        location_id=f["location_id"], date_from=f["date_from"], date_to=f["date_to"], flow_step=f.get("flow_step"),
+        bulk=f.get("bulk"), page=page, page_size=page_size)
     return total[0]["total"], rows, counts
 
 
@@ -57,9 +58,17 @@ def delete(db: Db, company_id: int, actor_user_id: int, request_id: int, type_co
 
 
 def cancel(db: Db, company_id: int, actor_user_id: int, request_id: int, reason: str, row_version: bytes,
-           type_code: str | None, permission_code: str | None) -> None:
+           type_code: str | None, permission_code: str | None, cancel_dates: str | None = None,
+           cancel_start_time: time | None = None, cancel_end_time: time | None = None) -> None:
     db.call_sets("req.usp_request_cancel", company_id=company_id, actor_user_id=actor_user_id, id=request_id,
-                 reason=reason, row_version=row_version, type_code=type_code, permission_code=permission_code)
+                 reason=reason, row_version=row_version, type_code=type_code, permission_code=permission_code,
+                 cancel_dates=cancel_dates, cancel_start_time=cancel_start_time, cancel_end_time=cancel_end_time)
+
+
+def add_bulk(db: Db, company_id: int, actor_user_id: int, type_code: str, request_count: int,
+             reason: str | None) -> int:
+    return _last_id(db.call_sets("req.usp_request_bulk_add", company_id=company_id, actor_user_id=actor_user_id,
+                                 type_code=type_code, request_count=request_count, reason=reason))
 
 
 def decide(db: Db, company_id: int, actor_user_id: int, request_id: int, action: str, remarks: str | None,
@@ -80,7 +89,8 @@ def list_approvals(db: Db, company_id: int, actor_user_id: int, f: dict[str, Any
         "req.usp_request_approval_list", company_id=company_id, actor_user_id=actor_user_id, box=f["box"],
         type_code=f["type_code"], status=f["status"], delegator_id=f["delegator_id"], search=f["search"],
         employee_id=f["employee_id"], department_id=f["department_id"], branch_id=f["branch_id"],
-        location_id=f["location_id"], date_from=f["date_from"], date_to=f["date_to"], page=page, page_size=page_size)
+        location_id=f["location_id"], date_from=f["date_from"], date_to=f["date_to"], flow_step=f.get("flow_step"),
+        page=page, page_size=page_size)
     return total[0]["total"], rows, counts
 
 

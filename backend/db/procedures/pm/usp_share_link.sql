@@ -1,6 +1,6 @@
 -- Sharing & Permissions of a task, list or workspace: people with Full Edit / Limited / Commenter,
 -- invites by email, the private link, "Share link with anyone" with a validity period and an access
--- limit, and the task properties shown. Stored only; no email is sent and no public page exists yet.
+-- limit, and the task properties shown. Public links open /api/public/shares/{token} (usp_public_share.sql); no email is sent yet.
 -- Managers and above change sharing.
 
 CREATE OR ALTER PROCEDURE [pm].[usp_share_link_get]
@@ -23,7 +23,8 @@ BEGIN
         THROW 50404, N'Item not found', 1;
 
     SELECT s.id, s.workspace_id, s.entity_type, s.entity_id, s.share_scope, s.token, s.is_public, s.allow_open_tasks,
-           s.valid_from, s.valid_to, s.max_access, ISNULL(s.access_count, 0) AS access_count, s.properties, s.row_version
+           s.valid_from, s.valid_to, s.max_access,
+           (SELECT COUNT(*) FROM [pm].[share_access] x WHERE x.share_link_id = s.id) AS access_count, s.properties, s.row_version
     FROM [pm].[share_link] s WHERE s.entity_type = @entity_type AND s.entity_id = @entity_id;
 
     SELECT m.id, m.employee_id, NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' ') AS employee_name, m.email, m.access_level
@@ -141,6 +142,7 @@ BEGIN
 
     BEGIN TRAN;
         DELETE [pm].[share_member] WHERE share_link_id = @id;
+        DELETE [pm].[share_access] WHERE share_link_id = @id;
         DELETE [pm].[share_link] WHERE id = @id;
     COMMIT;
 END

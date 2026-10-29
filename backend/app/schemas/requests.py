@@ -19,6 +19,7 @@ TravelMode = Literal["bus", "train", "taxi", "air", "own_car", "pool_car"]
 StayType = Literal["hotel", "self"]
 PaymentMethod = Literal["bank", "cash", "pay_order", "cheque"]
 RequisitionType = Literal["stationery", "it_equipment", "furniture", "asset", "consumable", "service", "other"]
+OvertimeType = Literal["mandatory", "voluntary"]
 
 
 class LeaveDetails(ApiModel):
@@ -55,6 +56,8 @@ class OvertimeDetails(ApiModel):
     start_time: time
     end_time: time
     applied_minutes: int | None = Field(None, gt=0)
+    # The bulk form's Type; kept when an edit leaves it out.
+    overtime_type: OvertimeType | None = None
 
 
 class RestDayDetails(ApiModel):
@@ -277,11 +280,20 @@ class ForwardIn(ApiModel):
 class CancelIn(ApiModel):
     reason: str = Field(min_length=1, max_length=4000)
     row_version: str
+    # Work from home only (the approver's "WFH Cancel": dates and a time range); 422 for other types.
+    # Stored with the cancellation and returned as cancelDates / cancelStartTime / cancelEndTime; they
+    # change nothing yet (open product question R2: the whole request is cancelled as before).
+    dates: list[date] | None = Field(None, max_length=366)
+    start_time: time | None = None
+    end_time: time | None = None
 
 
 class BulkItemIn(ApiModel):
     id: int
     row_version: str
+    # What the single approve takes (e.g. overtime approvedMinutes); bulk-reject ignores it. Left out, bulk
+    # approve prefills what the form would (a loan's amount ...).
+    details: ApprovalDetailsIn | None = None
 
 
 class BulkDecisionIn(ApiModel):
@@ -370,6 +382,10 @@ class RequestOut(ApiModel):
     submitted_at: datetime | None
     decided_at: datetime | None
     cancel_reason: str | None
+    # A work from home cancellation's dates and time range, as given (R2).
+    cancel_dates: list[date] | None = None
+    cancel_start_time: time | None = None
+    cancel_end_time: time | None = None
     next_approver_id: str | None
     next_approver_name: str | None
     next_approver_kind: str | None
@@ -398,6 +414,89 @@ class RequestPage(ApiModel):
     meta: PageMeta
     # Counts for the status tabs: pending, approved, rejected, cancelling, cancelled.
     counts: dict[str, int]
+
+
+# ---------------------------------------------------------------- overtime: typed details, bulk filing
+
+class OvertimeDetailsOut(ApiModel):
+    """`details` of an overtime request."""
+    department_id: str | None = None
+    department_name: str | None = None
+    location_id: str | None = None
+    location_name: str | None = None
+    branch_id: str | None = None
+    branch_name: str | None = None
+    overtime_date: date | None = None
+    start_time: time | None = None
+    end_time: time | None = None
+    applied_minutes: int | None = None
+    approved_minutes: int | None = None
+    overtime_type: str | None = None
+    # Filed with others through POST /requests/overtime/bulk.
+    is_bulk: bool = False
+    bulk_id: str | None = None
+    # Set on final approval: the overtime policy and slab the approved minutes fell under (empty when none).
+    overtime_policy_id: str | None = None
+    overtime_policy_name: str | None = None
+    slab_min_minutes: int | None = None
+    slab_max_minutes: int | None = None
+    encashment_type: str | None = None
+    encashment_leave_type_id: str | None = None
+    encashment_leave_type_name: str | None = None
+
+
+class OvertimeRequestOut(RequestOut):
+    details: OvertimeDetailsOut
+
+
+class OvertimeRequestDetailOut(RequestDetailOut):
+    details: OvertimeDetailsOut
+
+
+class OvertimeRequestPage(RequestPage):
+    data: list[OvertimeRequestOut]
+
+
+class OvertimeBulkIn(ApiModel):
+    """Create Bulk Overtime Request: one overtime request per person, filed on their behalf in one
+    all-or-nothing call. The date is fromDate (toDate, when given, must be the same day); details are the
+    Apply form's (departmentId ... appliedMinutes)."""
+    employee_ids: list[int] = Field(min_length=1, max_length=100)
+    overtime_type: OvertimeType
+    from_date: date
+    to_date: date | None = None
+    reason: str = Field(min_length=1, max_length=4000)
+    description: str | None = Field(None, max_length=4000)
+    application: str | None = None
+    attachments: list[int] = Field([], max_length=20)
+    details: OvertimeDetails
+
+
+class OvertimeBulkOut(ApiModel):
+    bulk_id: str
+    overtime_type: str
+    count: int
+    requests: list[OvertimeRequestOut]
+
+
+# ---------------------------------------------------------------- writing the application with AI (R1)
+
+class GenerateApplicationIn(ApiModel):
+    """The form as filled so far (every field optional)."""
+    employee_id: int | None = None
+    from_date: date | None = None
+    to_date: date | None = None
+    reason: str | None = Field(None, max_length=4000)
+    description: str | None = Field(None, max_length=4000)
+    details: dict[str, Any] | None = None
+    tone: Literal["formal", "neutral"] = "formal"
+    language: str = Field("en", min_length=2, max_length=10)
+
+
+class GeneratedApplicationOut(ApiModel):
+    # HTML with <p>, <ul>, <strong> only.
+    text: str
+    generated_at: datetime
 
 
 # ---------------------------------------------------------------- settings

@@ -41,6 +41,7 @@ def list_tasks(workspace_id: int,
                start_from: date | None = Query(None, alias="startFrom"),
                start_to: date | None = Query(None, alias="startTo"),
                overdue: bool = False,
+               has_location: bool = Query(False, alias="hasLocation"),
                subtasks: Literal["expanded", "collapsed", "separate"] = "expanded",
                group_by: Literal["none", "status", "priority", "assignee", "tag", "due_date", "task_type", "list"] =
                Query("status", alias="groupBy"),
@@ -53,8 +54,8 @@ def list_tasks(workspace_id: int,
                "include_closed": include_closed, "priorities": priorities, "assignee_ids": assignee_ids,
                "include_unassigned": include_unassigned, "tag_ids": tag_ids, "created_by_ids": created_by_ids,
                "task_type": task_type, "due_from": due_from, "due_to": due_to, "start_from": start_from,
-               "start_to": start_to, "overdue_only": overdue, "subtasks": subtasks, "group_by": group_by,
-               "sort_by": sort_by, "sort_dir": sort_dir}
+               "start_to": start_to, "overdue_only": overdue, "has_location": has_location, "subtasks": subtasks,
+               "group_by": group_by, "sort_by": sort_by, "sort_dir": sort_dir}
     return c.list_tasks(db, ctx, workspace_id, filters, paging)
 
 

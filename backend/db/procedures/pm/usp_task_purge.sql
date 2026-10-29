@@ -1,6 +1,6 @@
 -- Internal: removes the tasks listed in the caller's #purge (task_id) table and everything that
 -- hangs off them (assignees, tags, dependencies, comments, time, checklist, files, values,
--- extensions, reminders, share links, favourites). The caller checks access and runs the transaction.
+-- extensions, reminders, share links, favourites, doc links, link attachments, recents). The caller checks access and runs the transaction.
 CREATE OR ALTER PROCEDURE [pm].[usp_task_purge]
 AS
 BEGIN
@@ -21,7 +21,12 @@ BEGIN
     DELETE x FROM [pm].[reminder] x JOIN #purge p ON p.task_id = x.entity_id AND x.entity_type = N'task';
     DELETE x FROM [pm].[favorite] x JOIN #purge p ON p.task_id = x.entity_id AND x.entity_type = N'task';
     DELETE m FROM [pm].[share_member] m JOIN [pm].[share_link] s ON s.id = m.share_link_id JOIN #purge p ON p.task_id = s.entity_id AND s.entity_type = N'task';
+    DELETE x FROM [pm].[share_access] x JOIN [pm].[share_link] s ON s.id = x.share_link_id JOIN #purge p ON p.task_id = s.entity_id AND s.entity_type = N'task';
     DELETE s FROM [pm].[share_link] s JOIN #purge p ON p.task_id = s.entity_id AND s.entity_type = N'task';
+
+    DELETE x FROM [pm].[doc_task] x JOIN #purge p ON p.task_id = x.task_id;
+    DELETE x FROM [pm].[task_external_file] x JOIN #purge p ON p.task_id = x.task_id;
+    DELETE x FROM [pm].[recent_item] x JOIN #purge p ON p.task_id = x.entity_id AND x.entity_type = N'task';
 
     -- Attachments go; the files themselves stay with the file service (only it removes stored files and bytes).
     DELETE a FROM [core].[attachment] a JOIN #purge p ON p.task_id = a.entity_id AND a.entity_type = N'pm.task';

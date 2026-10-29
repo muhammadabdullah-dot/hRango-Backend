@@ -5,6 +5,7 @@
 --   consents       consent steps the caller is asked for
 --   cancellations  steps of cancellation flows
 -- @status 'pending' means waiting for the caller; other values filter the request's status.
+-- @flow_step: only requests whose current pending step is held by that approver kind or authority (R3).
 -- Result sets: the total; the page; counts for the status tabs.
 CREATE OR ALTER PROCEDURE [req].[usp_request_approval_list]
     @company_id    BIGINT,
@@ -20,6 +21,7 @@ CREATE OR ALTER PROCEDURE [req].[usp_request_approval_list]
     @location_id   BIGINT = NULL,
     @date_from     DATE = NULL,
     @date_to       DATE = NULL,
+    @flow_step     NVARCHAR(30) = NULL,
     @page          INT = 1,
     @page_size     INT = 10
 AS
@@ -53,7 +55,10 @@ BEGIN
            AND (@branch_id IS NULL OR r.branch_id = @branch_id)
            AND (@location_id IS NULL OR r.location_id = @location_id)
            AND (@date_from IS NULL OR ISNULL(r.to_date, r.from_date) >= @date_from)
-           AND (@date_to IS NULL OR r.from_date <= @date_to));
+           AND (@date_to IS NULL OR r.from_date <= @date_to)
+           AND (@flow_step IS NULL OR EXISTS (SELECT 1 FROM [req].[request_step] fs
+                                              WHERE fs.request_id = r.id AND fs.action_taken = N'pending'
+                                                AND fs.approver_kind = @flow_step)));
     UPDATE m SET status = r.status FROM @mine m JOIN [req].[request] r ON r.id = m.request_id;
 
     SELECT COUNT(*) AS total FROM @mine

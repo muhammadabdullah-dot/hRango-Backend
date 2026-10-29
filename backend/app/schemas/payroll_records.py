@@ -276,9 +276,24 @@ class SalaryRevisionOut(ApiModel):
     branch_name: str | None = None
     job_title_name: str | None = None
     joining_date: date | None = None
+    # The last e-mail of the revision letter; 'disabled': asked while mail is not set up.
+    email_status: Literal["none", "queued", "sent", "failed", "disabled"] = "none"
+    emailed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None
     row_version: str
+
+
+class SalaryRevisionEmailPreviewOut(ApiModel):
+    subject: str
+    body_html: str
+    # The address it goes to; empty when the person has none.
+    to: str
+
+
+class SalaryRevisionEmailOut(ApiModel):
+    status: Literal["queued", "sent", "failed", "disabled"]
+    sent_at: datetime | None
 
 
 class CurrentSalaryOut(ApiModel):
@@ -313,6 +328,27 @@ class LeaveEncashmentIn(ApiModel):
     basis: Literal["overtime", "earned_salary", "per_hour_rate", "overnight"]
     amount_per_leave: Decimal | None = Field(None, gt=0)
     row_version: str | None = None
+
+
+class LeaveEncashmentPreviewIn(ApiModel):
+    leave_type_id: int
+    fiscal_year: int = Field(ge=2000, le=2100)
+    all_employees: bool = False
+    employee_ids: list[int] = Field(default_factory=list, max_length=10000)
+    basis: Literal["overtime", "earned_salary", "per_hour_rate", "overnight"]
+    amount_per_leave: Decimal | None = Field(None, gt=0)
+    # The encashment being edited (its own days are given back); blank for a new one.
+    id: int | None = None
+
+
+class LeaveEncashmentPreviewOut(ApiModel):
+    employee_id: str
+    employee_name: str | None
+    available_days: float
+    encashable_days: float
+    # 'min': below the type's minimum, left out; 'max': paid for the maximum only.
+    capped_by: Literal["min", "max"] | None
+    amount: float
 
 
 class LeaveEncashmentRowOut(ApiModel):

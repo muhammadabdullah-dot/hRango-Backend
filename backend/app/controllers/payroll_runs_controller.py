@@ -1,16 +1,20 @@
 """HTTP shape for payroll runs, the salary sheet and payslips."""
 from typing import Any
 
+from fastapi import Response
+
 from app.controllers.payroll_settings_controller import out
 from app.core.db import Db
 from app.core.paging import PageParams
 from app.core.rowversion import row_version_in
 from app.middlewares.auth import RequestContext
 from app.schemas.common import paginated
-from app.schemas.payroll_runs import (AccountBalanceOut, AccountSummaryOut, DailyWageOut, DailyWageRowOut,
-                                      EmployeeCountOut, PayrollEmployeeOut, PayrollOut, PayrollPayItemOut,
-                                      PayslipDetailOut, PayslipHistoryOut, PayslipLineOut, PayslipOut, RunErrorOut,
-                                      RunLogOut, SalarySheetOut)
+from app.schemas.payroll_runs import (AccountBalanceOut, AccountSummaryOut, BankFileFormatOut, CloseEmailFailureOut,
+                                      CloseEmailOut, CloseEmailPreviewOut, CloseEmailSummaryOut, DailyWageOut,
+                                      DailyWageRowOut, EmployeeCountOut, PayrollClosedOut, PayrollEmployeeOut, PayrollOut,
+                                      PayrollPayItemOut, PayslipDetailOut, PayslipHistoryOut, PayslipLineOut, PayslipOut,
+                                      RunErrorOut, RunLogOut, SalarySheetOut)
+from app.services import payroll_bank_file_service, payroll_mail_service
 from app.services import payroll_run_service as service
 
 Row = dict[str, Any]
@@ -67,8 +71,27 @@ def run(db: Db, ctx: RequestContext, id: int) -> dict:
 
 
 def close(db: Db, ctx: RequestContext, id: int, kind: str, body) -> dict:
-    head, items = service.close(db, ctx, id, kind, row_version_in(body.row_version))
-    return {"data": _payroll(head, items)}
+    head, items, email = service.close(db, ctx, id, kind, row_version_in(body.row_version))
+    return {"data": out(PayrollClosedOut, head, pay_items=[PayrollPayItemOut(**i) for i in items],
+                        email=CloseEmailSummaryOut(**email) if email else None)}
+
+
+def close_email_preview(db: Db, ctx: RequestContext, id: int) -> dict:
+    return {"data": CloseEmailPreviewOut(**payroll_mail_service.close_email_preview(db, ctx, id))}
+
+
+def close_email(db: Db, ctx: RequestContext, id: int) -> dict:
+    e = payroll_mail_service.close_email(db, ctx, id)
+    return {"data": CloseEmailOut(**{**e, "failures": [CloseEmailFailureOut(**f) for f in e["failures"]]})}
+
+
+def bank_file_formats() -> dict:
+    return {"data": [BankFileFormatOut(**f) for f in payroll_bank_file_service.formats()]}
+
+
+def bank_file(db: Db, ctx: RequestContext, id: int, kind: str, disbursement_bank_id: int | None, fmt: str | None) -> Response:
+    content, media, name = payroll_bank_file_service.bank_file(db, ctx, id, kind, disbursement_bank_id, fmt)
+    return Response(content=content, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 def history(db: Db, ctx: RequestContext, id: int) -> dict:

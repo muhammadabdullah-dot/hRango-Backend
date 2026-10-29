@@ -158,12 +158,22 @@ BEGIN
         OUTER APPLY [lv].[fn_leave_balance](@company_id, b.employee_id, @leave_type_id, @year_start) lb;
     END
 
+    -- Below the type's minimum: left out. Above its maximum: paid for the maximum.
+    DECLARE @under_min INT = (SELECT COUNT(*) FROM #b WHERE balance > 0 AND @min IS NOT NULL AND balance < @min),
+            @no_salary INT = (SELECT COUNT(*) FROM #b WHERE balance > 0 AND salary IS NULL AND @amount_per_leave IS NULL);
     DELETE #b WHERE balance <= 0 OR (@min IS NOT NULL AND balance < @min);
     UPDATE #b SET balance = @max WHERE @max IS NOT NULL AND balance > @max;
     IF @amount_per_leave IS NULL
         DELETE #b WHERE salary IS NULL;
     IF NOT EXISTS (SELECT 1 FROM #b)
-        THROW 50400, N'employeeIds|Nobody chosen has leave days to encash.', 1;
+    BEGIN
+        DECLARE @nobody NVARCHAR(400) = CASE
+            WHEN @under_min > 0 THEN CONCAT(N'employeeIds|Nobody chosen has the minimum of ', FORMAT(@min, N'0.##'),
+                                            N' days of this leave type to encash.')
+            WHEN @no_salary > 0 THEN N'employeeIds|Nobody chosen has a salary to work the amount out from.'
+            ELSE N'employeeIds|Nobody chosen has leave days to encash.' END;
+        THROW 50400, @nobody, 1;
+    END
 
     DECLARE @rate DECIMAL(18,2) = ISNULL(@amount_per_leave, (SELECT CAST(AVG(salary / 30.0) AS DECIMAL(18,2)) FROM #b));
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @today DATE = CAST(SYSUTCDATETIME() AS DATE);
@@ -227,4 +237,87 @@ BEGIN
         INSERT [core].[audit_log] (entity_type, entity_id, action_name, performed_by_user_id, performed_at)
         VALUES (N'lv.leave_encashment', @id, N'delete', @actor_user_id, SYSUTCDATETIME());
     COMMIT;
+END
+GO
+
+-- Preview of an encashment before saving (Payroll -> Leave Encashment form): per person the days available,
+-- the days that would be encashed (0 below the type's minimum, the maximum above it) and the amount, worked
+-- out exactly as pay.usp_leave_encashment_save does but without writing. @id: the encashment being edited
+-- (its own days are given back). People who would be left out are listed with encashable_days 0.
+-- TODO(payroll): share the balance rule with usp_leave_encashment_save (an inline function) so they cannot drift.
+CREATE OR ALTER PROCEDURE [pay].[usp_leave_encashment_preview]
+    @company_id       BIGINT,
+    @actor_user_id    BIGINT,
+    @permission_code  NVARCHAR(150),
+    @id               BIGINT = NULL,
+    @leave_type_id    BIGINT,
+    @fiscal_year      INT,
+    @all_employees    BIT = 0,
+    @employee_ids     NVARCHAR(MAX) = N'[]',
+    @basis            NVARCHAR(30),
+    @amount_per_leave DECIMAL(18,2) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @min DECIMAL(6,2), @max DECIMAL(6,2), @allowed BIT;
+    SELECT @allowed = allow_encashment, @min = encashment_min, @max = encashment_max
+    FROM [lv].[leave_type] WHERE id = @leave_type_id AND company_id = @company_id;
+    IF @allowed IS NULL
+        THROW 50400, N'leaveTypeId|Leave type not found.', 1;
+    IF @allowed = 0
+        THROW 50400, N'leaveTypeId|This leave type does not allow encashment.', 1;
+    IF @amount_per_leave IS NULL AND @basis <> N'earned_salary'
+        THROW 50400, N'amountPerLeave|Give the amount per leave for this basis.', 1;
+    IF @id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM [lv].[leave_encashment] WHERE id = @id AND company_id = @company_id)
+        THROW 50404, N'Leave encashment not found', 1;
+
+    CREATE TABLE #b (employee_id BIGINT PRIMARY KEY, balance DECIMAL(6,2), salary DECIMAL(18,2));
+    IF @all_employees = 1
+        INSERT #b (employee_id)
+        SELECT e.id FROM [hr].[employee] e
+        JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, @permission_code) v ON v.employee_id = e.id
+        WHERE e.company_id = @company_id AND e.status <> N'left'
+          AND e.id <> ISNULL((SELECT employee_id FROM [auth].[user_account] WHERE id = @actor_user_id), 0);
+    ELSE
+    BEGIN
+        INSERT #b (employee_id)
+        SELECT DISTINCT TRY_CONVERT(BIGINT, [value]) FROM OPENJSON(ISNULL(@employee_ids, N'[]')) WHERE TRY_CONVERT(BIGINT, [value]) IS NOT NULL;
+        IF NOT EXISTS (SELECT 1 FROM #b)
+            THROW 50400, N'employeeIds|Pick the employees, or All Employees.', 1;
+        IF EXISTS (SELECT 1 FROM #b b WHERE NOT EXISTS (
+            SELECT 1 FROM [auth].[fn_visible_employees](@company_id, @actor_user_id, @permission_code) v WHERE v.employee_id = b.employee_id))
+            THROW 50400, N'employeeIds|An employee was not found.', 1;
+    END
+
+    UPDATE b SET balance = ISNULL((SELECT SUM(l.days) FROM [lv].[leave_ledger] l
+                                   WHERE l.employee_id = b.employee_id AND l.leave_type_id = @leave_type_id AND l.fiscal_year = @fiscal_year
+                                     AND (@id IS NULL OR ISNULL(l.leave_encashment_id, 0) <> @id)), 0),
+                 salary = (SELECT TOP 1 s.amount FROM [hr].[employee_salary] s WHERE s.employee_id = b.employee_id
+                           AND s.effective_date <= SYSUTCDATETIME() ORDER BY s.effective_date DESC, s.id DESC)
+    FROM #b b;
+    IF @id IS NULL
+    BEGIN
+        DECLARE @year_start DATE = DATEFROMPARTS(@fiscal_year, ISNULL((SELECT CASE WHEN fiscal_year_start_month BETWEEN 1 AND 12
+                                   THEN fiscal_year_start_month END FROM [org].[company] WHERE id = @company_id), 1), 1);
+        UPDATE b SET balance = ISNULL(lb.available, 0)
+        FROM #b b
+        OUTER APPLY [lv].[fn_leave_balance](@company_id, b.employee_id, @leave_type_id, @year_start) lb;
+    END
+
+    SELECT x.employee_id, x.employee_name, x.available_days, x.encashable_days, x.capped_by,
+           CAST(ROUND(x.encashable_days * ISNULL(@amount_per_leave, ISNULL(x.salary, 0) / 30.0), 2) AS DECIMAL(18,2)) AS amount
+    FROM (
+        SELECT b.employee_id, NULLIF(CONCAT_WS(N' ', e.first_name, e.last_name), N'') AS employee_name, b.salary,
+               CAST(CASE WHEN b.balance < 0 THEN 0 ELSE b.balance END AS DECIMAL(6,2)) AS available_days,
+               CAST(CASE WHEN b.balance <= 0 THEN 0
+                         WHEN @amount_per_leave IS NULL AND b.salary IS NULL THEN 0
+                         WHEN @min IS NOT NULL AND b.balance < @min THEN 0
+                         WHEN @max IS NOT NULL AND b.balance > @max THEN @max
+                         ELSE b.balance END AS DECIMAL(6,2)) AS encashable_days,
+               CASE WHEN b.balance > 0 AND @min IS NOT NULL AND b.balance < @min THEN N'min'
+                    WHEN @max IS NOT NULL AND b.balance > @max THEN N'max' END AS capped_by
+        FROM #b b
+        JOIN [hr].[employee] e ON e.id = b.employee_id
+    ) x
+    ORDER BY x.employee_name;
 END

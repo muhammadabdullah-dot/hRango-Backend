@@ -67,7 +67,7 @@ BEGIN
     IF @name IS NULL OR @name = N''
         THROW 50400, N'name|Field name is required.', 1;
     IF @field_type NOT IN (N'text', N'long_text', N'number', N'money', N'date', N'checkbox', N'dropdown', N'labels',
-                           N'email', N'phone', N'website', N'rating', N'progress_manual', N'people')
+                           N'email', N'phone', N'website', N'rating', N'progress_manual', N'people', N'location')
         THROW 50400, N'fieldType|This field type is not available.', 1;
     IF @config IS NOT NULL AND ISJSON(@config) = 0
         THROW 50400, N'config|Field settings are not valid.', 1;

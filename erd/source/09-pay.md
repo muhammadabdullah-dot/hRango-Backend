@@ -155,6 +155,25 @@ voucher                               Vouchers / Employee Voucher; daily-wage vo
   verified_at
   remarks                             approver's or verifier's remarks
   status                              pending, approved, rejected, processed
+
+payroll_close_email                   Payroll close e-mail (one per closed monthly run); the people are rows of mail_outbox
+  id PK, payroll_id FK payroll
+  UNIQUE (payroll_id)
+  status                              disabled (mail not set up: nothing sent), queued, sent, failed
+  recipient_count {INT}               people with a released payslip and an e-mail address when it closed
+  queued_at, sent_at
+
+mail_outbox                           payroll e-mails, one row per person: close e-mails and salary revision letters
+  id PK, company_id FK company
+  entity_type {NN}                    pay.payroll (close e-mail), hr.employee_salary (salary revision letter)
+  entity_id {NN}                      no FK: the revision row belongs to hr and may be deleted there
+  employee_id FK employee
+  to_address {NVARCHAR(254)}
+  subject {NVARCHAR(300)}
+  status                              disabled, queued, sent, failed
+  queued_at, sent_at
+  error {NVARCHAR(1000)}
+  INDEX (entity_type, entity_id)
 ```
 
 ```
@@ -167,4 +186,6 @@ payroll *──* employee   (payroll_employee)
 payroll 1──* payslip 1──* payslip_line *──1 pay_item
 payroll 1──* payroll_run_log 1──* payroll_run_error
 employee 1──* opening_balance / employee_account_entry / tax_rebate / voucher
+payroll 1──1 payroll_close_email
+employee 1──* mail_outbox
 ```

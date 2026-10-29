@@ -69,7 +69,8 @@ days, holidays), `att.punch`, approved `req.request` (+ `req_leave`, `req_time_w
 `att.usp_request_apply_<kind>` / `att.usp_request_revert_<kind>` `@company_id, @actor_user_id, @request_id`, no result
 sets: **punch** (adds a `punch_request` punch; revert deletes it), **time_window** (relaxation / official visit:
 re-process; the processor reads the window), **overtime** (re-process; approved minutes = `approved_minutes` or
-`applied_minutes`), **work_from_home** (marks the request days' shifts `sch.schedule.is_wfh = 1`, revert sets 0, then re-process from_date..to_date; WFH days are the request's `req.request_day` rows, not the whole range). Each counts its own request whatever its status
+`applied_minutes`; also records on `req.req_overtime` the overtime policy and a copy of the slab the minutes fell under,
+revert clears them), **work_from_home** (marks the request days' shifts `sch.schedule.is_wfh = 1`, revert sets 0, then re-process from_date..to_date; WFH days are the request's `req.request_day` rows, not the whole range). Each counts its own request whatever its status
 at that moment (`@include_request_id` / `@exclude_request_id`). A frozen day refuses the approval (409
 ATTENDANCE_FROZEN, OQ C9 open). Days HR edited by hand are not changed by an approval.
 
@@ -83,6 +84,13 @@ ATTENDANCE_FROZEN, OQ C9 open). Days HR edited by hand are not changed by an app
   list (kept as `isActive`); 31-day log range (followed).
 - **Neither**: automatic device pull (C1/C2), offline buffering (NFR-5) — a connector posting to the device punches
   endpoint covers both once C1 is answered; a nightly processing job (no job runner in the stack).
+
+- **Overtime (Oct 2026, gray structure)**: `OvertimePolicyOut.usageCount` (approved overtime requests that fell
+  under the policy); `DELETE /attendance/settings/overtime-policies/{id}` answers 409 `IN_USE` while it is in use
+  (make it inactive instead). Which policy applies: the company's first active daily policy with a slab holding the
+  approved minutes. TODO: assigning policies to people / departments, monthly policies, capping approved minutes by
+  the top slab, encashment (leave credit or full-day pay). Bulk overtime filing and the typed overtime `details` are
+  in 04-requests.md.
 
 ## ERD changes (05-att.md)
 

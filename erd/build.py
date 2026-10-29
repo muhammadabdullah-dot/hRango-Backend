@@ -22,7 +22,7 @@ BACKEND_MODULE = {
     "org": "organisation", "hr": "employees", "auth": "access", "sch": "scheduling", "att": "attendance",
     "lv": "leave", "req": "requests", "loan": "loans", "pay": "payroll", "sep": "separation",
     "rec": "recruitment", "mp": "manpower", "core": "core", "eng": "engagement", "pm": "projects",
-    "ben": "benefits", "perf": "performance", "trn": "training",
+    "ben": "benefits", "perf": "performance", "trn": "training", "frm": "forms",
 }
 
 # ---------------------------------------------------------------- parsing

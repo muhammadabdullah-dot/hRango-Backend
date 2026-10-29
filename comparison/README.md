@@ -6,8 +6,8 @@ the ERD (`erd/source/`), and records what the backend builds and why. **The docu
 authority**; the frontend shows which modules and screens exist and will be moved to the backend's
 routes and shapes (each file lists them).
 
-State on 26 Oct 2026: 250 tables, 261 procedure files (752 procedures, 84 functions), 671 permission
-codes, 985 API operations, 237 tests passing on one merged database.
+State on 29 Oct 2026: 270 tables, 281 procedure files, 693 permission codes, 1,084 API operations,
+286 tests passing on one merged database.
 
 | File | Modules | Endpoints | Tests |
 |---|---|---|---|
@@ -25,6 +25,15 @@ codes, 985 API operations, 237 tests passing on one merged database.
 | [12-employee-profile.md](12-employee-profile.md) | Employee profile tabs, photo, documents, Update Information requests | 35 added | 5 |
 | [13-engagement.md](13-engagement.md) | Newsfeed and surveys | 34 | 13 |
 | [14-files-and-events.md](14-files-and-events.md) | Real uploads and events across 11 existing modules (what changed, for the frontend) | changed | 134 |
+| [15-custom-forms.md](15-custom-forms.md) | Custom Form: builder, audience, filling, responses | 15 | 7 |
+| [16-frontend-permission-codes.md](16-frontend-permission-codes.md) | The permission codes the frontend checks that the backend names differently | — | — |
+
+Added on 29 Oct (the frontend's `docs/backend-dependencies.md`): Custom Form (15); Project Management docs,
+notepad, personal list, recents, dashboards, overdue settings, location fields, reminder delivery, the public
+share page and external storage stubs (08); payroll close and salary revision mails, bank transfer files and
+the leave encashment preview (06); request application AI stub, WFH cancellation times, the flow-step filter,
+CSV exports, bulk overtime and policy slabs (04, 03); the employee summary and gender filter (12). AI routes
+answer 503 until a provider is connected; mail is recorded with the status `disabled` until SMTP is set up.
 
 Also added on 26 Oct: Expense claims, Air Tickets and Requisitions as request types (04-requests.md),
 file uploads (`/api/files`), and webhooks (`/api/integrations/webhooks`).

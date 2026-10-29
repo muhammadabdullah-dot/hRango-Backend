@@ -25,6 +25,7 @@ BEGIN
         EXEC [pm].[usp_task_purge];
 
         DELETE m FROM [pm].[share_member] m JOIN [pm].[share_link] s ON s.id = m.share_link_id WHERE s.workspace_id = @id;
+        DELETE x FROM [pm].[share_access] x JOIN [pm].[share_link] s ON s.id = x.share_link_id WHERE s.workspace_id = @id;
         DELETE [pm].[share_link] WHERE workspace_id = @id;
         DELETE [pm].[reminder] WHERE workspace_id = @id;
         DELETE [pm].[favorite] WHERE (entity_type = N'workspace' AND entity_id = @id)
@@ -35,7 +36,12 @@ BEGIN
         DELETE [pm].[custom_field] WHERE workspace_id = @id;
         DELETE [pm].[tag] WHERE workspace_id = @id;
         DELETE [pm].[sprint] WHERE workspace_id = @id;
+        DELETE c FROM [pm].[doc_comment] c JOIN [pm].[doc] d ON d.id = c.doc_id WHERE d.workspace_id = @id;
+        DELETE x FROM [pm].[doc_contributor] x JOIN [pm].[doc] d ON d.id = x.doc_id WHERE d.workspace_id = @id;
+        DELETE x FROM [pm].[doc_task] x JOIN [pm].[doc] d ON d.id = x.doc_id WHERE d.workspace_id = @id;
         DELETE [pm].[doc] WHERE workspace_id = @id;
+        DELETE [pm].[workspace_overdue_setting] WHERE workspace_id = @id;
+        DELETE [pm].[recent_item] WHERE workspace_id = @id;
         DELETE m FROM [pm].[task_list_member] m JOIN [pm].[task_list] l ON l.id = m.task_list_id WHERE l.workspace_id = @id;
         DELETE [pm].[task_list] WHERE workspace_id = @id;
         DELETE [pm].[folder] WHERE workspace_id = @id;

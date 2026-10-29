@@ -17,7 +17,8 @@ setup_logging()
 # One router per module, all under /api (the frontend's VITE_API_BASE_URL).
 ROUTERS = ("auth", "files", "access", "integrations", "organisation", "employees", "dashboard", "inbox", "attendance",
            "roster", "scheduling", "warning", "requests", "leaves", "loans", "payroll", "assets", "offboarding",
-           "manpower", "recruitment", "performance", "training", "benefits", "engagement", "projects")
+           "manpower", "recruitment", "performance", "training", "benefits", "engagement", "projects", "forms",
+           "public", "integrations_storage")
 
 
 

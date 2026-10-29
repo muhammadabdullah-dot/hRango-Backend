@@ -3,12 +3,17 @@
 -- installments paid, warning penalties linked to the payslip, leave encashments linked, rule postings
 -- processed. Logged with user and time. Publishes payroll.closed and tells each employee whose payslip
 -- was released.
+-- Monthly runs also record the close e-mail (pay.payroll_close_email): 'disabled' while mail is not set
+-- up (@mail_enabled 0, nothing is sent), else 'queued'; one pay.mail_outbox row per person with a
+-- released payslip and an e-mail address (status 'queued' for the mail sender, or 'disabled').
 CREATE OR ALTER PROCEDURE [pay].[usp_payroll_close]
     @company_id    BIGINT,
     @actor_user_id BIGINT = NULL,
     @id            BIGINT,
     @kind          NVARCHAR(30),
-    @row_version   BINARY(8)
+    @row_version   BINARY(8),
+    @mail_enabled  BIT = 0,
+    @mail_subject  NVARCHAR(300) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -85,6 +90,25 @@ BEGIN
             UPDATE a SET is_processed = 1, updated_at = @now, updated_by = @actor_user_id
             FROM [pay].[employee_account_entry] a
             JOIN [pay].[payslip] p ON p.id = a.payslip_id AND p.payroll_id = @id;
+
+            -- Close e-mail: who would get it (released payslips with an address).
+            DECLARE @mail TABLE (employee_id BIGINT PRIMARY KEY, to_address NVARCHAR(254));
+            INSERT @mail (employee_id, to_address)
+            SELECT p.employee_id, a.address
+            FROM [pay].[payslip] p
+            JOIN @released r ON r.id = p.id
+            CROSS APPLY (SELECT [pay].[fn_employee_email](p.employee_id) AS address) a
+            WHERE a.address IS NOT NULL;
+
+            INSERT [pay].[payroll_close_email] (payroll_id, status, recipient_count, queued_at, created_by)
+            VALUES (@id, CASE WHEN @mail_enabled = 1 THEN N'queued' ELSE N'disabled' END, (SELECT COUNT(*) FROM @mail),
+                    CASE WHEN @mail_enabled = 1 THEN @now END, @actor_user_id);
+            -- One row per person either way, so the run shows who it was (or would have been) sent to.
+            INSERT [pay].[mail_outbox] (company_id, entity_type, entity_id, employee_id, to_address, subject, status, queued_at, created_by)
+            SELECT @company_id, N'pay.payroll', @id, employee_id, to_address, @mail_subject,
+                   CASE WHEN @mail_enabled = 1 THEN N'queued' ELSE N'disabled' END, CASE WHEN @mail_enabled = 1 THEN @now END,
+                   @actor_user_id
+            FROM @mail;
         END
 
         INSERT [pay].[payroll_run_log] (payroll_id, kind, started_at, finished_at, status, run_by_user_id, processed_count, error_count, created_by)

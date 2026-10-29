@@ -20,7 +20,7 @@ FeatureCode = Literal["priority", "sprints", "email", "tags", "custom_fields", "
                       "incomplete_warning", "dependency_warning", "reschedule_dependencies", "show_status_progress"]
 PermissionLevel = Literal["default", "can_edit", "can_view", "private"]
 FieldType = Literal["text", "long_text", "number", "money", "date", "checkbox", "dropdown", "labels", "email",
-                    "phone", "website", "rating", "progress_manual", "people"]
+                    "phone", "website", "rating", "progress_manual", "people", "location"]
 Priority = Literal["urgent", "high", "normal", "low"]
 
 

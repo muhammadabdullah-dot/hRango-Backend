@@ -494,6 +494,8 @@ class OvertimePolicyOut(ApiModel):
     description: str | None
     is_active: bool
     slab_count: int
+    # Approved overtime requests that fell under this policy; a policy in use cannot be deleted (409 IN_USE).
+    usage_count: int = 0
     slabs: list[OvertimeSlabOut] | None
     created_at: datetime
     updated_at: datetime | None

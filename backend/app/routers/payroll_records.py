@@ -7,15 +7,16 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from app.controllers import payroll_records_controller as c
 from app.core.db import Db, get_db
 from app.core.paging import PageParams, page_params
-from app.middlewares.auth import RequestContext, require
+from app.middlewares.auth import RequestContext, require, require_any
 from app.schemas.common import Item, Paginated
 from app.schemas.payroll_records import (AccountEntryIn, AccountEntryOut, AccountImportIn, CurrentSalaryOut,
                                          FinalSettlementCloseIn, FinalSettlementOut, ImportResultOut, LeaveEncashmentIn,
-                                         LeaveEncashmentOut, LeaveEncashmentRowOut, OpeningBalanceEmployeeOut,
-                                         OpeningBalanceImportIn, OpeningBalanceIn, OpeningBalanceOut,
-                                         OpeningBalanceSummaryOut, SalaryImportIn, SalaryRevisionIn, SalaryRevisionOut,
-                                         StatementRowOut, VoucherDecisionIn, VoucherIn, VoucherOut)
-from app.schemas.payroll_runs import PayslipDetailOut
+                                         LeaveEncashmentOut, LeaveEncashmentPreviewIn, LeaveEncashmentPreviewOut,
+                                         LeaveEncashmentRowOut, OpeningBalanceEmployeeOut, OpeningBalanceImportIn,
+                                         OpeningBalanceIn, OpeningBalanceOut, OpeningBalanceSummaryOut, SalaryImportIn,
+                                         SalaryRevisionEmailOut, SalaryRevisionEmailPreviewOut, SalaryRevisionIn,
+                                         SalaryRevisionOut, StatementRowOut, VoucherDecisionIn, VoucherIn, VoucherOut)
+from app.schemas.payroll_runs import PayslipDetailOut, RowVersionIn
 
 router = APIRouter()
 NO_CONTENT = status.HTTP_204_NO_CONTENT
@@ -256,6 +257,20 @@ def import_revisions(body: SalaryImportIn, db: Db = Depends(get_db),
     return c.import_revisions(db, ctx, body)
 
 
+@router.get("/salary-revisions/{id}/email/preview", response_model=Item[SalaryRevisionEmailPreviewOut])
+def revision_email_preview(id: int, db: Db = Depends(get_db),
+                           ctx: RequestContext = Depends(require("payroll.salary_revision.view"))):
+    """The salary revision letter: subject, body and the address it goes to."""
+    return c.revision_email_preview(db, ctx, id)
+
+
+@router.post("/salary-revisions/{id}/email", response_model=Item[SalaryRevisionEmailOut])
+def send_revision_email(id: int, body: RowVersionIn, db: Db = Depends(get_db),
+                        ctx: RequestContext = Depends(require("payroll.salary_revision.send"))):
+    """E-mails the letter to the person. While mail is not set up the answer is status 'disabled' (nothing sent)."""
+    return c.send_revision_email(db, ctx, id, body)
+
+
 @router.get("/salary-revisions/{id}", response_model=Item[SalaryRevisionOut])
 def get_revision(id: int, db: Db = Depends(get_db), ctx: RequestContext = Depends(require("payroll.salary_revision.view"))):
     return c.get_revision(db, ctx, id)
@@ -289,6 +304,15 @@ def list_encashments(q: str | None = None, leave_type_id: int | None = Query(Non
                      ctx: RequestContext = Depends(require("payroll.leave_encashment.view"))):
     f = dict(search=q, leave_type_id=leave_type_id, fiscal_year=year, employee_id=employee_id)
     return c.list_encashments(db, ctx, f, paging)
+
+
+@router.post("/leave-encashments/preview", response_model=Item[list[LeaveEncashmentPreviewOut]])
+def preview_encashment(body: LeaveEncashmentPreviewIn, db: Db = Depends(get_db),
+                       ctx: RequestContext = Depends(require_any("payroll.leave_encashment.create",
+                                                                 "payroll.leave_encashment.edit"))):
+    """What saving would encash, per person: days available, days encashed (0 below the type's minimum, the
+    maximum above it, `cappedBy` says which) and the amount. Nothing is written."""
+    return c.preview_encashment(db, ctx, body)
 
 
 @router.get("/leave-encashments/{id}", response_model=Item[LeaveEncashmentOut])

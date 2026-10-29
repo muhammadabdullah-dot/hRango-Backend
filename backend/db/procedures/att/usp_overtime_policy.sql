@@ -1,6 +1,8 @@
 -- Overtime Policy (design: Overtime -> Overtime Policy): a daily or monthly policy whose slabs turn overtime
 -- minutes into a full day or a leave. Slabs are saved with the policy:
 -- @slabs = [{"minMinutes": 60, "maxMinutes": 239, "encashmentType": "leave", "leaveTypeId": 4}, ...]
+-- usage_count: approved overtime requests that fell under the policy (set by att.usp_request_apply_overtime);
+-- a policy with usage cannot be deleted (409 IN_USE).
 
 CREATE OR ALTER PROCEDURE [att].[usp_overtime_policy_get]
     @company_id BIGINT,
@@ -11,7 +13,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM [att].[overtime_policy] WHERE id = @id AND company_id = @company_id)
         THROW 50404, N'Overtime policy not found', 1;
 
-    SELECT p.id, p.name, p.period, p.description, p.is_active, p.created_at, p.updated_at, p.row_version
+    SELECT p.id, p.name, p.period, p.description, p.is_active,
+           (SELECT COUNT(*) FROM [req].[req_overtime] o WHERE o.overtime_policy_id = p.id) AS usage_count,
+           p.created_at, p.updated_at, p.row_version
     FROM [att].[overtime_policy] p WHERE p.id = @id;
 
     SELECT s.id, s.min_minutes, s.max_minutes, s.encashment_type, s.leave_type_id, lt.title AS leave_type_name
@@ -41,6 +45,7 @@ BEGIN
 
     SELECT p.id, p.name, p.period, p.description, p.is_active,
            (SELECT COUNT(*) FROM [att].[overtime_policy_slab] s WHERE s.overtime_policy_id = p.id) AS slab_count,
+           (SELECT COUNT(*) FROM [req].[req_overtime] o WHERE o.overtime_policy_id = p.id) AS usage_count,
            p.created_at, p.updated_at, p.row_version
     FROM [att].[overtime_policy] p
     WHERE p.company_id = @company_id AND (@pattern IS NULL OR p.name LIKE @pattern) AND (@period IS NULL OR p.period = @period)
@@ -162,6 +167,9 @@ BEGIN
         THROW 50404, N'Overtime policy not found', 1;
     IF @rv <> @row_version
         THROW 50409, N'Someone else changed this overtime policy. Reload it and try again', 1;
+    -- Approved overtime records which policy it fell under (req_overtime.overtime_policy_id).
+    IF EXISTS (SELECT 1 FROM [req].[req_overtime] WHERE overtime_policy_id = @id)
+        THROW 50409, N'id|IN_USE|Approved overtime fell under this policy. Make it inactive instead.', 1;
 
     BEGIN TRAN;
         DELETE [att].[overtime_policy_slab] WHERE overtime_policy_id = @id;

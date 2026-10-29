@@ -56,6 +56,29 @@ class EmployeeIn(ApiModel):
     row_version: str | None = None
 
 
+class GenderCountsOut(ApiModel):
+    male: int
+    female: int
+    other: int
+    # No gender recorded.
+    unspecified: int = 0
+
+
+class StatusCountsOut(ApiModel):
+    active: int
+    probation: int
+    notice: int
+    left: int
+    inactive: int
+
+
+class EmployeeSummaryOut(ApiModel):
+    """GET /employees/summary: the directory's tiles over the same people and filters as the list."""
+    total: int
+    by_gender: GenderCountsOut
+    by_status: StatusCountsOut
+
+
 class EmployeeOut(ApiModel):
     id: str
     code: str

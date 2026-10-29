@@ -47,6 +47,7 @@ CREATE OR ALTER PROCEDURE [hr].[usp_employee_list]
     @employment_type_id BIGINT = NULL,
     @employee_group_id  BIGINT = NULL,
     @line_manager_id    BIGINT = NULL,
+    @gender             NVARCHAR(30) = NULL,
     @page               INT = 1,
     @page_size          INT = 50
 AS
@@ -77,6 +78,7 @@ BEGIN
       AND (@employment_type_id IS NULL OR e.employment_type_id = @employment_type_id)
       AND (@employee_group_id IS NULL OR e.employee_group_id = @employee_group_id)
       AND (@line_manager_id IS NULL OR e.line_manager_id = @line_manager_id)
+      AND (@gender IS NULL OR e.gender = @gender)
     OPTION (RECOMPILE);
 
     SELECT COUNT(*) AS total FROM @ids;

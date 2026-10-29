@@ -270,5 +270,13 @@ def save_encashment(db: Db, ctx: RequestContext, id: int | None, body, row_versi
                                 json.dumps(body.employee_ids), row_version)
 
 
+def preview_encashment(db: Db, ctx: RequestContext, body) -> list[Row]:
+    """The same rules as saving (pay.usp_leave_encashment_save), without writing."""
+    if not body.all_employees and not body.employee_ids:
+        raise _invalid("employeeIds", "Pick the employees, or All Employees.")
+    code = ENCASH["create" if body.id is None else "edit"]
+    return repo.preview_encashment(db, ctx.company_id, ctx.user_id, code, body, json.dumps(body.employee_ids))
+
+
 def delete_encashment(db: Db, ctx: RequestContext, id: int, row_version: bytes) -> None:
     repo.delete_encashment(db, ctx.company_id, ctx.user_id, ENCASH["delete"], id, row_version)

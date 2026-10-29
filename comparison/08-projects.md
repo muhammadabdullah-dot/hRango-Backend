@@ -1,6 +1,8 @@
 # 08 Project management: frontend vs documents vs ERD
 
-Status: first build done (backend `/api/projects`, schema `pm`).
+Status: first build done (backend `/api/projects`, schema `pm`). Second build (29 Oct 2026): gray structure for
+the frontend's Backend Dependencies T1-T11 (docs, AI routes, notepad, reminder delivery, overdue settings, public
+share page, recents and dashboards, location fields, external storage links, personal list); see "Second build".
 
 Sources: Functional Requirements PDF pp. 181-257 (Project and Task Management BRD, "BRD" below) and its
 digest `requirements/HRango - Project Management BRD/README.md`; `requirements/HRango - Project Management
@@ -25,19 +27,19 @@ README "Project Management" and "departures".
 | Task row menu: rename, favourite, move, convert, task type, remind me, share, delete | same | Workspace design 01 | task, favorite, reminder, share_link | Build: all; Duplicate and Merge (BRD only, not in the row menu) not built |
 | Task fields: assignees (+ story points), dates + time, recurrence, priority, tags, dependencies, status, task type, time estimate, time tracked, files | List view cells | Workspace design 02, 03; BRD "Task Detail Screen" | task, task_assignee, task_tag, task_dependency, time_entry, core.attachment | Build |
 | Labels | List view cells | BRD: Labels = multi-select custom field type | custom_field (labels) | Build with changes: a custom field of type `labels`, not a second tag kind |
-| Custom fields ("Add Fields") | not drawn (column "+") | BRD "Task Custom Fields" (25 types); Backlog Columns marks 37 columns Skipped | custom_field, task_field_value | Build 14 plain types; formula, rollup, relationship, tasks, AI, signature, voting, location, files, progress auto: not built (computed / AI / need storage) |
+| Custom fields ("Add Fields") | not drawn (column "+") | BRD "Task Custom Fields" (25 types); Backlog Columns marks 37 columns Skipped | custom_field, task_field_value | Build 15 plain types (location added in the second build: `{address, lat, lng}`, `?hasLocation=true`); formula, rollup, relationship, tasks, AI, signature, voting, files, progress auto: not built (computed / AI / need storage) |
 | Comments: threads, @mentions (people, tasks), assign, resolve, like/emoji, edit, delete | comments-panel | Workspace design 03; BRD "Employee Side" (comment, edit own) | task_comment, comment_mention, comment_reaction | Build. Docs / Locations mentions: not built (no docs, no locations in PM) |
 | Time tracking: timer, manual entries, notes, per person | time-tracked-field | Workspace design 03; BRD "Time Tracking" | time_entry | Build |
-| Reminders ("Remind Me", reminder on task / list / workspace) | reminder-popover | BRD "Reminders"; Workspace design 02 | reminder | Build: stored only, nothing sent |
-| Sharing & Permissions | share-dialog | BRD "Sharing and Permission"; Workspace design (full read) | share_link, share_member | Build: stored only, no public page, no email |
+| Reminders ("Remind Me", reminder on task / list / workspace) | reminder-popover | BRD "Reminders"; Workspace design 02 | reminder | Build. Delivery: `pm.usp_reminder_deliver_due` / `deliver_due_reminders(db)` sends due reminders to the inbox (`projects.reminder`); a scheduler must call it (not wired yet) |
+| Sharing & Permissions | share-dialog | BRD "Sharing and Permission"; Workspace design (full read) | share_link, share_member, share_access | Build. Public page `GET /api/public/shares/{token}` (+ `/tasks/{id}`), validity and access limit enforced; invitation emails not sent |
 | Checklist (20 max) | not in frontend | BRD "Subtasks and Checklist" | checklist_item | Build |
 | Overdue, Request Extension, story point impact | not in frontend | BRD "Overdue Task Handling", "Request Task Extension" | task.original_due_date, is_closed_late, task_extension | Build: request by assignee, decision by workspace manager+ inside PM |
 | History | not in frontend | BRD "Maintain History" | core.audit_log | Build: task and workspace history with action/date filter and search; export not built |
-| Home / Workspace / Project / Task Dashboards | `/project-management/home`, `workspace-dashboard`, `project-dashboard`, `task-dashboard` (placeholders) | BRD "Dashboards" (no design) | none (computed) | Not in first build: no design; the List view filters (assignee, overdue, status) cover the data |
-| Docs, Notepad | doc rows in the panel (not links) | BRD "Documents", "Notepad" (no design) | doc, note | Not in first build: no design; tables kept in the ERD |
+| Home / Workspace / Project / Task Dashboards | `/project-management/home`, `workspace-dashboard`, `project-dashboard`, `task-dashboard` (placeholders) | BRD "Dashboards" (no design) | recent_item, personal_item (rest computed) | Second build: `/dashboard/home`, `/workspaces/{id}/dashboard`, `/folders/{id}/dashboard`, `/recents`, `/personal-list` |
+| Docs, Notepad | doc rows in the panel (not links) | BRD "Documents", "Notepad" (no design) | doc, doc_task, doc_comment, doc_contributor, note, note_version | Second build (gray): docs CRUD, archive, duplicate, task links, comments; export answers 501. Notes with versions and convert to task / doc |
 | Sprints, Board / Calendar / Timeline / Gantt / Team / Table / Activity / Map / Workload / Mind Map views | view tabs open "not designed" | BRD; Backlog Columns marks Sprints Skipped | sprint, list_view | Views are stored (type only); only List has data behind it. Sprints not built |
 | Invite from email (assignee / workspace) | assignee popup | Workspace design 02 | none | Not built: brings non-employees into an HR system (design README issue 8). Share invites by email are stored |
-| AI features (16) | none | BRD "AI Automation" (no acceptance criteria) | none | Not built |
+| AI features (16) | none | BRD "AI Automation" (no acceptance criteria) | none | Routes and shapes only (`/projects/ai/*`): 503 `AI_UNAVAILABLE` until a model is connected |
 
 ## Gaps both ways
 
@@ -45,7 +47,8 @@ README "Project Management" and "departures".
   reminders list, dashboards, docs, notepad, file manager ("Resources"), custom field definition screen.
 - Frontend without documents: tasks at a workspace's top level (no list) - kept, contradicts nothing; per-task
   `rating` 1-3 (design "Fair / Good / Excellent") - kept as `task.rating`; Average Story Points footer
-  (computed by the client from `storyPointsTotal`); third-party file sources (Drive, Dropbox ...) - not built.
+  (computed by the client from `storyPointsTotal`); third-party file sources (Drive, Dropbox ...) - routes only
+  (`/api/integrations/storage`, 503 `STORAGE_NOT_CONFIGURED`), link attachments stored.
 - Frontend payloads differ from the API (ids vs names for departments, `labels` as tags, comments `likedByIds`,
   share `full-edit/edit/view`): the frontend will be adjusted to the API.
 
@@ -73,7 +76,12 @@ README "Project Management" and "departures".
 - `share_link`: `workspace_id`, `share_scope`, `allow_open_tasks`; new `share_member` (people / emails with
   Full Edit, Limited, Commenter).
 - New `favorite` (Add to Favorites, Hide Space; per employee).
-- `sprint`, `doc`, `note` kept, marked not in the first build.
+- `sprint` kept, marked not in the first build.
+- Second build: `doc` rebuilt (company, folder / list, content JSON + HTML, visibility, owner, cover, settings,
+  counts, archived_at) with `doc_task`, `doc_comment`, `doc_contributor`; `note` per sign-in (`user_account_id`,
+  `content_html`, `version_no`, `archived_at`) with `note_version`; new `personal_item`, `recent_item`,
+  `workspace_overdue_setting`, `task_external_file` (link attachments), `share_access` (one row per public
+  opening; `share_link.access_count` is no longer written, so visits do not change the link's row version).
 
 ## Workspace roles (enforced in the pm procedures)
 
@@ -97,7 +105,7 @@ Column permissions on top: Can View or Private refuse the edit; Private blanks t
 ## Decisions on unclear points
 
 - Visibility: `private` = members only; `workspace` and `public` = everyone in the company reads, members
-  edit. "Anyone on the internet" (design) is not offered; real outside links are share links (stored only).
+  edit. "Anyone on the internet" (design) is not offered; real outside links are public share links (`/api/public/shares/{token}`).
 - Company RBAC (`projects.*`) only opens screens; scopes are not used. The workspace role decides.
 - Task name uniqueness within a list, "every field required when adding", "due date not in the past unless
   Backlog", "time entries within start / due": not enforced (BRD digest shows they block normal use or are
@@ -111,10 +119,13 @@ Column permissions on top: Can View or Private refuse the edit; Private blanks t
 - Priority: Urgent, High, Normal, Low (design and BRD task detail).
 - Blocking: a task waiting on unfinished tasks stays in Not Started and cannot be completed.
 - Remap Subtask Due Dates / Reschedule Dependencies: shift direct subtasks / waiting tasks by the same days.
-- Story points: numeric per assignee (0-100). Late completion sets `is_closed_late`; the size of the
-  reduction is undefined in the BRD, so no number is changed.
-- Extension: one request per task in total (a rejected one is not repeated); approval inside PM by a
-  workspace manager or above; approval keeps the first due date in `original_due_date`.
+- Story points: numeric per assignee (0-100). Late completion sets `is_closed_late`. Second build: the
+  workspace's overdue setting `penaltyPercent` (default 0) gives `storyPointsPenalty = round(total x percent / 100, 2)`
+  for a task closed late (0 when on time, null without story points) and `storyPointsEffective = total - penalty`;
+  nothing is stored, so changing the percent changes past tasks too (TODO: freeze at closing if wanted).
+- Extension: up to the workspace's `maxExtensions` requests per task (default 1, so one in total unless
+  changed), one pending at a time; approval inside PM by a workspace manager or above; approval keeps the
+  first due date in `original_due_date`. `TaskRowOut.latestExtension` carries the newest request.
 - Dates are compared with today in UTC (company time zone handling is shared work).
 - Comments up to 2000 characters; time entry notes 165 (design); attachments PDF, DOCX, XLSX, PNG, JPG up to 10 MB.
 - A **private** workspace created by an account without an employee record is refused up front (422
@@ -127,8 +138,28 @@ Column permissions on top: Can View or Private refuse the edit; Private blanks t
   view / create / edit / delete / assign on tasks, comments, time_tracking, reminders; extensions.create),
   because inside a workspace the workspace role decides. Today Employee gets only view / create, so a
   contributor cannot change a status. Tests grant the codes per user (`tests/factories_projects.py`).
-- Notifications (core.notification): reminders, mentions, comment assignment, extension decisions are stored
-  but nothing is sent.
+- Notifications (core.notification): task assignment and mentions notify; reminders notify once a scheduler
+  calls `projects_collab_service.deliver_due_reminders(db)` (every few minutes; worker or `scripts/nightly.py`,
+  not wired: shared files). Comment assignment and extension decisions do not notify yet.
 - File storage: attachments and covers keep file details only (`storage_path` empty).
 - Requests module: an optional `task_extension` request kind if extensions should follow approval flows.
 - Employees module: photo URL for the people picker (only `photoFileId` is returned).
+
+## Second build (gray structure, 29 Oct 2026)
+
+Endpoints for the frontend's `docs/backend-dependencies.md` "Project and Task Management" T1-T11. Shapes follow
+that file and `frontend/src/features/project-management/api/dashboards.api.ts`. Tests: `tests/test_projects_extras.py`.
+
+| Item | Endpoints | Permission | Built | Left (TODO) |
+|---|---|---|---|---|
+| T1 Docs | `GET/POST /projects/workspaces/{id}/docs`, `GET/PUT/DELETE /projects/docs/{id}`, `PATCH .../archive`, `POST .../duplicate`, `PUT .../tasks`, `GET .../export?format=pdf\|docx`, `GET/POST .../comments` | `projects.docs.view/create/edit/delete/archive/export`; comments post `projects.comments.create` | private docs owner-only; members add; owner or manager+ edit (editors become contributors); owner or HR+ delete; word / character counts and reading minutes from the HTML | export (501 `EXPORT_NOT_AVAILABLE`); comment edit / delete / mentions; `public` visibility behaves as `workspace` (no public doc page); version history |
+| T2, T10 AI | `POST /projects/ai/write`, `GET ai/line-up`, `ai/standup`, `POST ai/reminders/suggest`, `GET ai/at-risk`, `POST ai/assign/suggest`, `GET ai/dependency-risk`, `POST ai/doc-suggest`, `GET ai/related`, `POST ai/comment-suggest`, `GET ai/extension-suggestions`, `ai/search`, `ai/workload`, `ai/summary` | `projects.ai.generate` | request / response schemas; 503 `AI_UNAVAILABLE` (`app.core.ai`) | every model call (a configured provider answers 501 `AI_NOT_IMPLEMENTED`); server jobs #7, #10, #13 |
+| T3 Notepad | `GET/POST /projects/notes`, `PUT/DELETE /notes/{id}`, `PATCH .../archive`, `GET .../history`, `POST .../convert` | `projects.workspaces.view` (own notes); convert also `projects.tasks.create` / `projects.docs.create` | per sign-in; a version per save; convert to task (title, text) or doc (HTML), original delete / archive / keep, one transaction | rich content beyond HTML; restoring an old version |
+| T4 Reminder delivery | procedure `pm.usp_reminder_deliver_due`, `projects_collab_service.deliver_due_reminders(db, company_id=None, now=None) -> int` | none (job) | due = `remind_at - notify_before_minutes` passed in the company's local time; inbox notification `projects.reminder` (entity `task` / `list` / `workspace`, app link) to the assignee (else owner), then `notified_at`; claimed with the row version so overlapping runs do not send twice | wiring into a scheduler; recurring and "adaptive" reminders; doc reminders |
+| T5 Overdue | `GET/PUT /projects/workspaces/{id}/settings/overdue`; `TaskOut/TaskRowOut.storyPointsPenalty`, `storyPointsEffective`, `latestExtension` | view `projects.workspaces.view`; save `projects.workspaces.edit` + workspace HR / admin | penalty rule above; `maxExtensions` enforced on extension requests | freezing the penalty at closing; penalty in reports |
+| T6 Public share page | `GET /api/public/shares/{token}`, `GET /api/public/shares/{token}/tasks/{taskId}` | none (token) | only `isPublic` links; 404 `SHARE_NOT_FOUND`, 410 `SHARE_EXPIRED` (also before `validFrom`), 410 `SHARE_EXHAUSTED`; each page or task opened counts one access (`share_access`); properties filter the fields; entity `task_list` shows as `list`, `workspace` as `view` | rate limiting; invitation emails; a page per share scope (`page` vs `list`) |
+| T7 Recents, dashboards | `GET/POST /projects/recents`, `GET /projects/dashboard/home`, `GET /projects/workspaces/{id}/dashboard`, `GET /projects/folders/{id}/dashboard` | recents `projects.workspaces.view`; dashboards `projects.tasks.view` | newest 50 recents per person, items no longer reachable drop out; dashboards per the spec (weeks start Sunday, UTC dates), private columns hidden in My Work | the screens still compute most figures themselves; dates in company time |
+| T8 Location fields | custom field type `location`, value `{address, lat, lng}`; `GET .../tasks?hasLocation=true` | as custom fields / tasks | validated in Python and in the procedure | Map view itself; geocoding |
+| T9 External storage | `GET /api/integrations/storage`, `POST .../{provider}/connect`, `GET .../{provider}/callback`, `DELETE .../{provider}`, `GET .../{provider}/files`; `POST /projects/tasks/{taskId}/attachments/link` | `projects.storage.view/create/delete`; link `projects.tasks.edit` | four providers listed as not connected; connect / callback / files 503 `STORAGE_NOT_CONFIGURED`; disconnect a no-op 204; link attachments stored (`task_external_file`, id `link-<n>`, `fileId` null, `url` = provider address) and listed / counted / deleted with the task's files | OAuth apps, a per-user connection table (tokens encrypted), file browsing, checking a link against the connection; the router `app/routers/integrations_storage.py` is not registered in `app/main.py` yet |
+| T11 Personal List | `GET/POST /projects/personal-list`, `PATCH/DELETE /projects/personal-list/{id}` | `projects.workspaces.view` (own items) | per sign-in, open items first, 120 characters, 409 on a stale row version, 500 items at most | none |
+

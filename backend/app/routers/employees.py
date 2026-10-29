@@ -14,7 +14,8 @@ from app.schemas.common import Item, Paginated
 from app.schemas.employees import (BankAccountIn, BankAccountOut, ChangeOut, ContractIn, ContractOut, DecisionIn,
                                    DependentIn, DependentOut, DocumentIn, DocumentOut, EducationIn, EducationOut,
                                    EmergencyContactIn, EmergencyContactOut, EmployeeIn, EmployeeLookupOut,
-                                   EmployeeOut, EmploymentPeriodIn, EmploymentPeriodOut, ExperienceIn, ExperienceOut,
+                                   EmployeeOut, EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut,
+                                   ExperienceIn, ExperienceOut,
                                    HistoryOut, IdentityIn, PhotoIn, RowVersionIn, SalaryIn, SalaryOut, SkillIn,
                                    SkillOut, UpdateRequestIn, UpdateRequestOut)
 
@@ -22,28 +23,41 @@ router = APIRouter(prefix="/employees", tags=["employees"])
 NO_CONTENT = status.HTTP_204_NO_CONTENT
 
 
+def employee_filters(q: str | None = None, status_: str | None = Query(None, alias="status"),
+                     include_inactive: bool = Query(False, alias="includeInactive"),
+                     branch_id: int | None = Query(None, alias="branchId"),
+                     location_id: int | None = Query(None, alias="locationId"),
+                     area_id: int | None = Query(None, alias="areaId"),
+                     department_id: int | None = Query(None, alias="departmentId"),
+                     division_id: int | None = Query(None, alias="divisionId"),
+                     designation_id: int | None = Query(None, alias="designationId"),
+                     job_title_id: int | None = Query(None, alias="jobTitleId"),
+                     grade_id: int | None = Query(None, alias="gradeId"),
+                     employment_type_id: int | None = Query(None, alias="employmentTypeId"),
+                     employee_group_id: int | None = Query(None, alias="employeeGroupId"),
+                     line_manager_id: int | None = Query(None, alias="lineManagerId"),
+                     gender: Literal["male", "female", "other"] | None = None) -> dict:
+    """The directory's filter panel, shared by the list and its summary tiles."""
+    return {"search": q, "status": status_, "include_inactive": include_inactive, "branch_id": branch_id,
+            "location_id": location_id, "area_id": area_id, "department_id": department_id,
+            "division_id": division_id, "designation_id": designation_id, "job_title_id": job_title_id,
+            "grade_id": grade_id, "employment_type_id": employment_type_id,
+            "employee_group_id": employee_group_id, "line_manager_id": line_manager_id, "gender": gender}
+
+
 @router.get("", response_model=Paginated[EmployeeOut])
-def list_employees(q: str | None = None, status_: str | None = Query(None, alias="status"),
-                   include_inactive: bool = Query(False, alias="includeInactive"),
-                   branch_id: int | None = Query(None, alias="branchId"),
-                   location_id: int | None = Query(None, alias="locationId"),
-                   area_id: int | None = Query(None, alias="areaId"),
-                   department_id: int | None = Query(None, alias="departmentId"),
-                   division_id: int | None = Query(None, alias="divisionId"),
-                   designation_id: int | None = Query(None, alias="designationId"),
-                   job_title_id: int | None = Query(None, alias="jobTitleId"),
-                   grade_id: int | None = Query(None, alias="gradeId"),
-                   employment_type_id: int | None = Query(None, alias="employmentTypeId"),
-                   employee_group_id: int | None = Query(None, alias="employeeGroupId"),
-                   line_manager_id: int | None = Query(None, alias="lineManagerId"),
-                   paging: PageParams = Depends(page_params), db: Db = Depends(get_db),
+def list_employees(filters: dict = Depends(employee_filters), paging: PageParams = Depends(page_params),
+                   db: Db = Depends(get_db),
                    ctx: RequestContext = Depends(require("employees.directory.view"))) -> dict:
-    filters = {"search": q, "status": status_, "include_inactive": include_inactive, "branch_id": branch_id,
-               "location_id": location_id, "area_id": area_id, "department_id": department_id,
-               "division_id": division_id, "designation_id": designation_id, "job_title_id": job_title_id,
-               "grade_id": grade_id, "employment_type_id": employment_type_id,
-               "employee_group_id": employee_group_id, "line_manager_id": line_manager_id}
     return c.list_employees(db, ctx, filters, paging)
+
+
+@router.get("/summary", response_model=Item[EmployeeSummaryOut])
+def employee_summary(filters: dict = Depends(employee_filters), db: Db = Depends(get_db),
+                     ctx: RequestContext = Depends(require("employees.directory.view"))) -> dict:
+    """The directory's tiles: total, by gender and by status, over the people the list shows with the
+    same filters (and the same scope of employees.directory.view)."""
+    return c.employee_summary(db, ctx, filters)
 
 
 @router.get("/lookup", response_model=Paginated[EmployeeLookupOut])

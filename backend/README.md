@@ -91,7 +91,18 @@ and `tests/test_departments.py` its test.
 - Webhooks (Settings -> Integrations, `/api/integrations/webhooks`) subscribe to types, `module.*` or `*`.
   Deliveries are signed (`X-HRango-Signature: sha256=HMAC(secret, "<timestamp>.<body>")`) and retried with
   back-off; see `app/core/events.py`. The API delivers them in a background thread (`WEBHOOK_WORKER`), or run
-  `scripts/webhooks.py` as a service. Mail is not built; a mail gateway can subscribe to `notification.created`.
+  `scripts/webhooks.py` as a service. The same loop sends due project reminders to the inbox once a minute.
+- Mail is not built (`MAIL_ENABLED=false`, `app/core/mail.py`): routes that send mail record it and report the
+  status `disabled`. Payroll keeps what it would send in `pay.mail_outbox`. A mail gateway can also subscribe to
+  `notification.created`.
+
+## AI and routes without sign-in
+
+- AI routes (request applications, project docs and suggestions) call `app.core.ai.ensure_available()` first.
+  No provider is connected (`AI_PROVIDER` blank), so they answer 503 `AI_UNAVAILABLE` and the screens keep
+  their manual editors.
+- `/api/public/...` works without a token (`routers/public.py`: shared project links). Each route checks its
+  own token and limits; nothing else goes there.
 
 ## Procedure conventions
 

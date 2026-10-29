@@ -6,6 +6,10 @@
 --             owning module's effect; a rejection leaves it approved.
 -- Allowed when @permission_code reaches the employee, or when the caller took part in its approval
 -- (approver, role holder or delegatee: "the delegatee can Approve, Reject or Cancel").
+-- Work from home only: @cancel_dates (JSON list of yyyy-MM-dd within the request's dates), @cancel_start_time
+-- and @cancel_end_time are stored with the cancellation (the approver's "WFH Cancel" form, R2). What
+-- cancelling a day from-to a time means is an open product question: they change nothing yet.
+-- TODO(R2): once answered, a partial cancellation keeps the other days / hours (revert only those).
 CREATE OR ALTER PROCEDURE [req].[usp_request_cancel]
     @company_id      BIGINT,
     @actor_user_id   BIGINT,
@@ -13,15 +17,19 @@ CREATE OR ALTER PROCEDURE [req].[usp_request_cancel]
     @reason          NVARCHAR(MAX),
     @row_version     BINARY(8),
     @type_code       NVARCHAR(30) = NULL,
-    @permission_code NVARCHAR(150) = NULL
+    @permission_code NVARCHAR(150) = NULL,
+    @cancel_dates      NVARCHAR(MAX) = NULL,
+    @cancel_start_time TIME(0) = NULL,
+    @cancel_end_time   TIME(0) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
     DECLARE @me BIGINT = (SELECT employee_id FROM [auth].[user_account] WHERE id = @actor_user_id);
-    DECLARE @rv BINARY(8), @status NVARCHAR(30), @employee_id BIGINT;
-    SELECT @rv = r.row_version, @status = r.status, @employee_id = r.employee_id
+    DECLARE @rv BINARY(8), @status NVARCHAR(30), @employee_id BIGINT, @code NVARCHAR(30), @r_from DATE, @r_to DATE;
+    SELECT @rv = r.row_version, @status = r.status, @employee_id = r.employee_id, @code = t.code,
+           @r_from = r.from_date, @r_to = ISNULL(r.to_date, r.from_date)
     FROM [req].[request] r JOIN [req].[request_type] t ON t.id = r.request_type_id
     WHERE r.id = @id AND r.company_id = @company_id AND r.is_deleted = 0 AND (@type_code IS NULL OR t.code = @type_code);
     IF @rv IS NULL
@@ -44,11 +52,25 @@ BEGIN
     IF @status NOT IN (N'pending', N'approved')
         THROW 50409, N'Only a pending or approved request can be cancelled.', 1;
 
+    SET @cancel_dates = NULLIF(LTRIM(RTRIM(@cancel_dates)), N'');
+    IF (@cancel_dates IS NOT NULL OR @cancel_start_time IS NOT NULL OR @cancel_end_time IS NOT NULL)
+       AND @code <> N'work_from_home'
+        THROW 50400, N'dates|Dates and times can only be given when cancelling a work from home request.', 1;
+    IF @cancel_dates IS NOT NULL AND ISJSON(@cancel_dates) = 0
+        THROW 50400, N'dates|Dates are not valid.', 1;
+    IF @cancel_dates IS NOT NULL AND EXISTS (
+            SELECT 1 FROM OPENJSON(@cancel_dates) j
+            WHERE TRY_CAST(j.value AS DATE) IS NULL OR TRY_CAST(j.value AS DATE) NOT BETWEEN @r_from AND @r_to)
+        THROW 50400, N'dates|Choose dates within the request.', 1;
+    IF @cancel_start_time IS NOT NULL AND @cancel_end_time IS NOT NULL AND @cancel_end_time <= @cancel_start_time
+        THROW 50400, N'endTime|End time must be after the start time.', 1;
+
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     DECLARE @since BIGINT = (SELECT MAX(id) FROM [req].[request_step] WHERE request_id = @id);
     BEGIN TRAN;
         UPDATE [req].[request]
         SET cancel_reason = @reason, cancel_requested_at = @now, updated_at = @now, updated_by = @actor_user_id,
+            cancel_dates = @cancel_dates, cancel_start_time = @cancel_start_time, cancel_end_time = @cancel_end_time,
             status = CASE WHEN @status = N'pending' THEN N'cancelled' ELSE N'cancelling' END,
             decided_at = CASE WHEN @status = N'pending' THEN @now ELSE decided_at END,
             current_node_id = NULL

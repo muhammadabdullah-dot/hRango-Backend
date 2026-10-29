@@ -30,6 +30,9 @@ request                               shared header for every request
   submitted_at, decided_at
   cancel_reason
   cancel_requested_at
+  cancel_dates      {NVARCHAR(MAX)}   WFH cancellation: the days asked for, a JSON list of yyyy-MM-dd (stored only; open product question R2)
+  cancel_start_time                   WFH cancellation: from this time (stored only; R2)
+  cancel_end_time                     WFH cancellation: to this time (stored only; R2)
   is_deleted                          deleted by the requester before anyone acted (kept for audit)
 
 request_day                           each day a multi-day request covers (leave, work from home, rest days)
@@ -40,7 +43,25 @@ req_leave          request_id PK/FK request, leave_type_id FK leave_type, is_sho
 req_punch          request_id PK/FK request, punch_date {NN}, punch_type {NN}, punch_time {NN}
 req_time_window    request_id PK/FK request, kind, window_date {NN}, start_time {NN}, end_time {NN}, time_slot_id FK time_slot {NULL}, duration_minutes
 req_rest_day       request_id PK/FK request, department_id FK department, roster_group_id FK roster_group {NN}, is_payable
-req_overtime       request_id PK/FK request, department_id FK department, location_id FK location {NULL}, branch_id FK branch {NULL}, overtime_date {NN}, start_time {NN}, end_time {NN}, applied_minutes {NN}, approved_minutes
+req_overtime                          one overtime request (the Apply form, or one person of a bulk filing)
+  request_id        PK/FK request
+  department_id     FK department
+  location_id       FK location {NULL}
+  branch_id         FK branch {NULL}
+  overtime_date     {NN}
+  start_time        {NN}
+  end_time          {NN}
+  applied_minutes   {NN}
+  approved_minutes
+  overtime_type                       mandatory, voluntary (the bulk form's Type; empty on a single application)
+  bulk_id           FK request_bulk {NULL}   filed together with others (Create Bulk Overtime Request)
+  overtime_policy_id FK overtime_policy {NULL}   set on final approval: the policy the approved minutes fell under
+  slab_min_minutes                    the slab they fell in, copied (policy edits replace slabs)
+  slab_max_minutes
+  encashment_type                     full_day, leave (copied from the slab)
+  encashment_leave_type_id FK leave_type {NULL}
+request_bulk                          requests filed together for several people in one all-or-nothing call (bulk overtime)
+  id PK, company_id FK company, request_type_id FK request_type {NN}, request_count {INT} {NN}, reason
 req_loan           request_id PK/FK request, loan_type_id FK loan_type, loan_category_id FK loan_category {NULL}, amount_requested {NN}, required_date {NN}, extension_no, approved_amount, currency {CHAR(3)}, payment_method, repayment_date
 req_travel         request_id PK/FK request, purpose {NN}, extension_no, alt_phone, advance_required
 req_promotion      request_id PK/FK request, is_demotion, grade_id FK grade, job_level_id FK job_level {NULL}, designation_id FK designation {NN}, job_title_id FK job_title {NN}, previous_salary, new_salary {NN}, effective_date {NN}
@@ -175,6 +196,8 @@ request_step                          one row per event and approver action; the
 
 ```
 request_type 1──* request 1──1 req_<kind>
+request_bulk 1──* req_overtime
+req_overtime *──1 overtime_policy   (the policy an approval fell under)
 request 1──* request_day / request_step / loan_guarantor / travel_* / expense_line / requisition_line
 expense_category 1──* expense_line
 expense_line / req_air_ticket ──> opening_balance   (payroll pays the approved claim)

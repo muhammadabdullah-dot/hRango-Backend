@@ -1,7 +1,7 @@
 -- The List view: a workspace's (or one list's) tasks with filters, grouping, sorting and subtask
 -- display (BRD "Task Filtering and Viewing Options", "Grouping & Sorting", "Show Task Alignment").
 --   CSV filters: @status_ids, @status_groups, @priorities (none = no priority), @assignee_ids,
---   @tag_ids, @created_by_ids (employee ids).
+--   @tag_ids, @created_by_ids (employee ids). @has_location: tasks with a location field value (Map view).
 --   @subtasks: expanded (subtasks under their parent), collapsed (top-level rows only; counts show
 --   the subtasks), separate (every task its own row).
 --   @group_by: none, status, priority, assignee, tag, due_date, task_type, list. A task with two
@@ -29,6 +29,7 @@ CREATE OR ALTER PROCEDURE [pm].[usp_task_list]
     @start_from         DATE = NULL,
     @start_to           DATE = NULL,
     @overdue_only       BIT = 0,
+    @has_location       BIT = 0,
     @subtasks           NVARCHAR(30) = N'expanded',
     @group_by           NVARCHAR(30) = N'status',
     @sort_by            NVARCHAR(30) = N'manual',
@@ -106,6 +107,8 @@ BEGIN
       AND (@start_from IS NULL OR t.start_date >= @start_from)
       AND (@start_to IS NULL OR t.start_date <= @start_to)
       AND (@overdue_only = 0 OR (t.due_date < @today AND s.status_group NOT IN (N'done', N'closed')))
+      AND (@has_location = 0 OR EXISTS (SELECT 1 FROM [pm].[task_field_value] v JOIN [pm].[custom_field] cf ON cf.id = v.custom_field_id
+                                        WHERE v.task_id = t.id AND cf.field_type = N'location'))
     OPTION (RECOMPILE);
 
     -- 2. Rows: top-level rows, and (expanded) subtasks under a matching parent.

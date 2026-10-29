@@ -3,6 +3,8 @@
 Settings tabs are payroll.settings.<tab> (Payroll Manager gets them, nobody else by default). Running and
 recalculating is `process`, closing a run or a final settlement is `close`, Finance verifies vouchers with
 `verify`. Holding and releasing payslips, and editing their lines, is `edit`; marking them paid is `process`.
+The close e-mail is read with the run's `view`; a run's bank transfer file is its `export`; e-mailing a salary
+revision letter is `payroll.salary_revision.send`; the leave encashment preview is its `create` or `edit`.
 """
 from app.catalogue._actions import CRUD
 
@@ -22,7 +24,7 @@ SCREENS: list[tuple[str, str, tuple[str, ...], bool]] = [
     ("payroll.final_settlement", "Final settlement", ("view", "process", "close", "export"), True),
     ("payroll.opening_balances", "Opening balances", (*CRUD, "import"), True),
     ("payroll.employee_accounts", "Employee accounts and account statement", (*CRUD, "import"), True),
-    ("payroll.salary_revision", "Salary revision", (*CRUD, "import"), True),
+    ("payroll.salary_revision", "Salary revision", (*CRUD, "import", "send"), True),
     ("payroll.leave_encashment", "Leave encashment", CRUD, True),
     ("payroll.reports", "Payroll reports", ("view", "export"), True),
 ]

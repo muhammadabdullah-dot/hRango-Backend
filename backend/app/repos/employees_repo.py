@@ -21,6 +21,12 @@ def list_employees(db: Db, company_id: int, actor_user_id: int, permission_code:
     return total[0]["total"], rows
 
 
+def employee_summary(db: Db, company_id: int, actor_user_id: int, permission_code: str,
+                     filters: dict[str, Any]) -> dict[str, Any]:
+    return db.call_one("hr.usp_employee_summary", company_id=company_id, actor_user_id=actor_user_id,
+                       permission_code=permission_code, **filters)
+
+
 def lookup_employees(db: Db, company_id: int, actor_user_id: int, permission_code: str, search: str | None,
                      branch_id: int | None, department_id: int | None, include_inactive: bool,
                      page: int, page_size: int) -> tuple[int, list[dict[str, Any]]]:

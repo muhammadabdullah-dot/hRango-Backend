@@ -32,8 +32,12 @@ BEGIN
         THROW 50400, N'newDueDate|Propose a date after the current due date.', 1;
     IF @reason IS NULL
         THROW 50400, N'reason|Give a reason for the extension.', 1;
-    IF EXISTS (SELECT 1 FROM [pm].[task_extension] WHERE task_id = @task_id)
-        THROW 50409, N'newDueDate|EXTENSION_EXISTS|Only one extension request is allowed per task.', 1;
+    -- Overdue settings: up to max_extensions requests per task (1 when the workspace has none), one pending at a time.
+    DECLARE @max_ext INT = ISNULL((SELECT max_extensions FROM [pm].[workspace_overdue_setting] WHERE workspace_id = @ws), 1);
+    IF EXISTS (SELECT 1 FROM [pm].[task_extension] WHERE task_id = @task_id AND status = N'pending')
+        THROW 50409, N'newDueDate|EXTENSION_EXISTS|This task already has an extension request waiting for an answer.', 1;
+    IF (SELECT COUNT(*) FROM [pm].[task_extension] WHERE task_id = @task_id) >= @max_ext
+        THROW 50409, N'newDueDate|EXTENSION_EXISTS|No more extension requests are allowed for this task.', 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;

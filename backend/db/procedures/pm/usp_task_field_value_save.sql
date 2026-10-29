@@ -57,6 +57,13 @@ BEGIN
             THROW 50400, N'value|Progress must be within the scale.', 1;
         IF @type = N'dropdown' AND NOT EXISTS (SELECT 1 FROM OPENJSON(@config, '$.options') WHERE value = @field_value)
             THROW 50400, N'value|Choose one of the options.', 1;
+        -- location: {"address": "...", "lat": -90..90, "lng": -180..180} (Map view).
+        IF @type = N'location' AND (ISJSON(@field_value) = 0 OR NULLIF(LTRIM(RTRIM(JSON_VALUE(@field_value, '$.address'))), N'') IS NULL
+                                    OR TRY_CONVERT(DECIMAL(9, 6), JSON_VALUE(@field_value, '$.lat')) NOT BETWEEN -90 AND 90
+                                    OR TRY_CONVERT(DECIMAL(9, 6), JSON_VALUE(@field_value, '$.lng')) NOT BETWEEN -180 AND 180
+                                    OR TRY_CONVERT(DECIMAL(9, 6), JSON_VALUE(@field_value, '$.lat')) IS NULL
+                                    OR TRY_CONVERT(DECIMAL(9, 6), JSON_VALUE(@field_value, '$.lng')) IS NULL)
+            THROW 50400, N'value|A location needs an address, a latitude (-90 to 90) and a longitude (-180 to 180).', 1;
         IF @type IN (N'labels', N'people') AND ISJSON(@field_value) = 0
             THROW 50400, N'value|Choose from the list.', 1;
         IF @type = N'labels' AND EXISTS (SELECT 1 FROM OPENJSON(@field_value) v
