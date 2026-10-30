@@ -14,6 +14,7 @@ import tempfile
 
 # Tests send webhooks themselves (webhook_dispatcher.dispatch_once); no background worker.
 os.environ["WEBHOOK_WORKER"] = "false"
+os.environ["PUBLIC_BASE_URL"] = ""
 # Uploads from tests go to a throw-away folder, never the real uploads folder.
 os.environ.setdefault("UPLOAD_DIR", tempfile.mkdtemp(prefix="hrango_test_uploads_"))
 

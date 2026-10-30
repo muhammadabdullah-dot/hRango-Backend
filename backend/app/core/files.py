@@ -153,7 +153,7 @@ def file_url(file_id: int | str | None, company_id: int) -> str | None:
         return None
     exp = datetime.now(UTC) + timedelta(minutes=settings.file_link_minutes)
     token = jwt.encode({"fid": str(file_id), "cid": str(company_id), "exp": exp}, _key(), algorithm="HS256")
-    return f"/api/files/{file_id}/download?token={token}"
+    return f"{settings.public_base_url.rstrip('/')}/api/files/{file_id}/download?token={token}"
 
 
 def read_file_token(token: str, file_id: int) -> int | None:

@@ -94,6 +94,8 @@ class EmployeeOut(ApiModel):
     # Present only for holders of employees.identity.view (canSeeIdentity).
     cnic: str | None
     can_see_identity: bool
+    # False for a colleague's record without employees.personal.view: the personal fields then read null.
+    can_see_personal: bool = True
     email: str | None
     phone_1: str | None
     phone_2: str | None

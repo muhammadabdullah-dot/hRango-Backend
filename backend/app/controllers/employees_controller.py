@@ -32,6 +32,8 @@ def _rv(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _employee(row: dict[str, Any], company_id: int) -> EmployeeOut:
+    if not row.get("can_see_personal", True):
+        row = {**row, **dict.fromkeys(s.PERSONAL_FIELDS)}
     return EmployeeOut(**_rv(row), photo_url=file_url(row.get("photo_file_id"), company_id))
 
 

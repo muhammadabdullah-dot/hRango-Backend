@@ -78,7 +78,10 @@ BEGIN
            COALESCE(
                (SELECT TOP 1 r.name FROM [auth].[user_role] ur
                 JOIN [auth].[role] r ON r.id = ur.role_id AND r.company_id = @company_id AND r.is_active = 1
-                WHERE ur.user_account_id = u.id ORDER BY r.name),
+                WHERE ur.user_account_id = u.id
+                -- Employee is what everyone also holds, so it names a person only when it is all they hold.
+                ORDER BY CASE WHEN r.code = N'employee' THEN 1 ELSE 0 END,
+                         (SELECT COUNT(*) FROM [auth].[role_permission] rp WHERE rp.role_id = r.id) DESC, r.name),
                CASE WHEN u.is_system_admin = 1 THEN N'System Administrator' END,
                N'') AS role_name
     FROM [auth].[user_account] u

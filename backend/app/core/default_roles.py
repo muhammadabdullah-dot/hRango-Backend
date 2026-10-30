@@ -22,7 +22,8 @@ SETTINGS = ("*.settings.*",)
 SELF_SERVICE = [
     ("dashboard.employee.view", "own"), ("inbox.notifications.view", "own"),
     ("employees.directory.view", "own"), ("employees.history.view", "own"),
-    ("employees.identity.view", "own"), ("employees.salary.view", "own"), ("employees.bank_accounts.view", "own"),
+    ("employees.identity.view", "own"), ("employees.personal.view", "own"), ("employees.salary.view", "own"),
+    ("employees.bank_accounts.view", "own"),
     ("employees.photo.edit", "own"), ("employees.contracts.view", "own"),
     *[(f"employees.{tab}.{action}", "own")
       for tab in ("emergency_contacts", "dependents", "skills", "education", "experience", "documents")
@@ -45,7 +46,7 @@ SELF_SERVICE = [
     ("offboarding.end_of_employment.view", "own"),
     # The approvals screen: consenting to a colleague's request, deciding as a delegate. Whether a person
     # may decide a given request comes from its flow (ACC-13), not from this permission.
-    ("requests.approvals.view", "own"),
+    ("requests.approvals.view", "own"), ("requests.approvals.approve", "own"), ("requests.approvals.reject", "own"),
     ("benefits.plan_years.view", "own"), ("benefits.plans.view", "own"), ("benefits.enrollment_windows.view", "own"),
     ("benefits.files.view", "own"), ("benefits.files.download", "own"),
     ("benefits.elections.view", "own"), ("benefits.elections.create", "own"), ("benefits.elections.edit", "own"),
@@ -83,7 +84,7 @@ def _managing(scope: str) -> list[tuple[str, str]]:
         ("benefits.elections.view", scope), ("benefits.perks.view", scope),
         ("payroll.vouchers.view", scope), ("payroll.vouchers.approve", scope), ("payroll.vouchers.reject", scope),
         *[(f"employees.{tab}.view", scope)
-          for tab in ("emergency_contacts", "dependents", "skills", "education", "experience", "documents")],
+          for tab in ("emergency_contacts", "skills", "education", "experience")],
         ("performance.overview.view", scope), ("performance.goals.*", scope), ("performance.reviews.view", scope),
         ("performance.reviews.evaluate", scope), ("performance.reviews.export", scope),
         ("performance.appraisals.view", scope),
@@ -147,7 +148,8 @@ ROLES = [
      "exclude": []},
     {"code": "executive", "name": "Executive",
      "description": "Dashboards and read-only views for the whole company.",
-     "grants": [("dashboard.*", "company"), ("*.view", "company")], "exclude": [*ADMIN_AREAS, *SETTINGS],
+     "grants": [("dashboard.*", "company"), ("*.view", "company"), ("requests.approvals.approve", "company"),
+                ("requests.approvals.reject", "company")], "exclude": [*ADMIN_AREAS, *SETTINGS],
      "no_sensitive": True},
     {"code": "employee", "name": "Employee",
      "description": "Their own records: time sheet, requests, leave, payslips, assets, benefits, projects.",

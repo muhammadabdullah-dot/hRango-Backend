@@ -14,7 +14,7 @@ from app.core.db import Db
 from app.core.errors import AppError, forbidden, invalid
 from app.middlewares.auth import RequestContext
 from app.repos import attendance_repo
-from app.schemas.attendance import BasicSettings, OvertimeSettings
+from app.schemas.attendance import BasicSettings, OvertimeSettings, SchedulingSettings
 
 Row = dict[str, Any]
 
@@ -31,7 +31,7 @@ def _check_range(from_date: date, to_date: date, max_days: int) -> None:
 
 # ---------------------------------------------------------------- settings
 
-SETTINGS_MODELS = {"attendance": BasicSettings, "overtime": OvertimeSettings}
+SETTINGS_MODELS = {"attendance": BasicSettings, "overtime": OvertimeSettings, "scheduling": SchedulingSettings}
 
 
 def _settings_out(model, version: bytes | None, values: dict[str, str]) -> tuple[Any, bytes | None]:

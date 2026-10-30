@@ -94,7 +94,9 @@ BEGIN
         FROM [att].[timesheet_day] t
         WHERE t.employee_id = e.employee_id AND t.work_date BETWEEN e.period_start AND e.period_end) ts
     OUTER APPLY (
-        SELECT -SUM(l.days) AS leave_days, -SUM(CASE WHEN lt.is_deductible = 1 THEN l.days ELSE 0 END) AS unpaid_leave_days
+        SELECT -SUM(l.days) AS leave_days, -SUM(CASE WHEN lt.is_deductible = 0 THEN l.days ELSE 0 END) AS unpaid_leave_days
+        -- Unpaid leave is a type that is not taken from a balance (is_deductible = 0, e.g. Unpaid Leave);
+        -- Annual, Casual, Sick come out of the balance (is_deductible = 1) and are paid.
         FROM [lv].[leave_ledger] l
         JOIN [lv].[leave_type] lt ON lt.id = l.leave_type_id
         WHERE l.employee_id = e.employee_id AND l.reason IN (N'availed', N'restored')

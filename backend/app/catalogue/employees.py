@@ -1,7 +1,8 @@
 """Permission codes for employee records (Talent Management).
 
 Salary, bank details and CNIC are separate, sensitive permissions from seeing the employee
-(Mini SRS ACC-9). Deactivating an employee is the directory's delete action.
+(Mini SRS ACC-9), and so are personal details (phones, home address, date of birth, family): the
+directory alone shows a colleague's work details. Deactivating an employee is the directory's delete action.
 
 Profile tabs (comparison/12-employee-profile.md): each tab is a screen with view and edit (edit adds,
 changes and removes its rows, like bank details). Identity documents (CNIC, passport, licence) also
@@ -12,6 +13,7 @@ so they are sensitive. "Update Information" is a request the employee files and 
 SCREENS: list[tuple[str, str, tuple[str, ...], bool]] = [
     ("employees.directory", "Employees", ("view", "create", "edit", "delete", "export"), False),
     ("employees.identity", "CNIC and identity details", ("view", "edit"), True),
+    ("employees.personal", "Personal details (phones, home address, date of birth, family)", ("view",), True),
     ("employees.salary", "Salary", ("view", "edit"), True),
     ("employees.bank_accounts", "Bank details", ("view", "edit"), True),
     ("employees.history", "Employment history", ("view", "export"), False),

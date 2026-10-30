@@ -87,3 +87,13 @@ def test_unused_uploads_are_purged(client, db, company, admin):
         store.remove(p)
     assert db.call("core.usp_file_get", company_id=company, id=int(unused["id"])) == []
     assert db.call("core.usp_file_get", company_id=company, id=int(used["id"])) != []
+
+
+def test_links_use_the_public_address_when_set(monkeypatch):
+    """The frontend may be served from another address: the link then has to name this API."""
+    from app.core.config import settings
+    from app.core.files import file_url
+
+    assert file_url(5, 1).startswith("/api/files/5/download?token=")
+    monkeypatch.setattr(settings, "public_base_url", "http://172.16.1.67:8000/")
+    assert file_url(5, 1).startswith("http://172.16.1.67:8000/api/files/5/download?token=")

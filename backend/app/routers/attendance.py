@@ -6,7 +6,7 @@ from app.controllers import attendance_controller as c
 from app.core.db import Db, get_db
 from app.core.paging import PageParams, page_params
 from app.middlewares.auth import RequestContext, require
-from app.schemas.attendance import (BasicSettings, ClockIn, ClockStateOut, DayDetailOut, DayEditIn, DeviceIn, DeviceOut,
+from app.schemas.attendance import (BasicSettings, SchedulingSettings, ClockIn, ClockStateOut, DayDetailOut, DayEditIn, DeviceIn, DeviceOut,
                                     DevicePunchesIn, EnrolmentOut, EnrolmentsIn, FilePunchesIn, GeoFenceIn, GeoFenceOut,
                                     HistoryOut, ImportResultOut, IpRestrictionIn, IpRestrictionOut, OverviewPageOut,
                                     OvertimePolicyIn, OvertimePolicyOut, OvertimeSettings, ProcessIn, ProcessOut,
@@ -203,6 +203,18 @@ def get_basic(db: Db = Depends(get_db), ctx: RequestContext = Depends(require("a
 def save_basic(body: BasicSettings, db: Db = Depends(get_db),
                ctx: RequestContext = Depends(require("attendance.settings.basic.edit"))) -> dict:
     return c.save_settings(db, ctx, "attendance", body)
+
+
+@router.get("/settings/scheduling", response_model=Item[SchedulingSettings])
+def get_scheduling_settings(db: Db = Depends(get_db),
+                            ctx: RequestContext = Depends(require("attendance.settings.basic.view"))) -> dict:
+    return c.get_settings(db, ctx, "scheduling")
+
+
+@router.put("/settings/scheduling", response_model=Item[SchedulingSettings])
+def save_scheduling_settings(body: SchedulingSettings, db: Db = Depends(get_db),
+                             ctx: RequestContext = Depends(require("attendance.settings.basic.edit"))) -> dict:
+    return c.save_settings(db, ctx, "scheduling", body)
 
 
 @router.get("/settings/overtime", response_model=Item[OvertimeSettings])

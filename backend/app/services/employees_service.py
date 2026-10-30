@@ -25,6 +25,12 @@ def normalise_cnic(value: str | None) -> str | None:
     return f"{digits[:5]}-{digits[5:12]}-{digits[12]}"
 
 
+# Hidden from whoever lacks employees.personal.view for the person (the controller blanks them).
+PERSONAL_FIELDS = ("parent_name", "marital_status", "religion", "nationality", "date_of_birth", "phone_1", "phone_2",
+                   "home_address", "home_city_id", "home_city_name", "emergency_contact_name",
+                   "emergency_contact_phone")
+
+
 def _holds(db: Db, ctx: RequestContext, code: str) -> bool:
     return bool(auth_repo.permission_check(db, ctx.company_id, ctx.user_id, code)["allowed"])
 
@@ -71,6 +77,10 @@ def update_employee(db: Db, ctx: RequestContext, employee_id: int, fields: dict[
     if fields.get("line_manager_id") == employee_id:
         raise invalid("An employee cannot report to themselves.", "lineManagerId")
     _check_dates(fields)
+    current = get_employee(db, ctx, employee_id)
+    if not current.get("can_see_personal", True):
+        # The form came back with the blanks it was shown; keep what is on the record.
+        fields = {**fields, **{k: current[k] for k in PERSONAL_FIELDS if k in fields}}
     return employees_repo.save_employee(db, ctx.company_id, ctx.user_id, "employees.directory.edit", employee_id,
                                         fields, False, None, row_version)
 

@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     max_upload_mb: int = 25
     # Download links are signed and expire after this many minutes.
     file_link_minutes: int = 30
+    # This API's address as browsers reach it, e.g. http://172.16.1.67:8000. Blank = links start at /api, which
+    # only works when the frontend is served from the same address (or proxies /api).
+    public_base_url: str = ""
     # Deliver webhooks from a background thread inside the API. Turn it off when scripts/webhooks.py
     # runs as its own service instead (and in tests).
     webhook_worker: bool = True

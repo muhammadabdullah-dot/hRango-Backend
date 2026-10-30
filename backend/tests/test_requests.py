@@ -321,7 +321,7 @@ def test_forward_consent_and_bulk(client, org):
     box = client.get("/api/requests/approvals", params={"box": "consents"}, headers=org.other.headers)
     assert box.status_code == 200 and [x["id"] for x in box.json()["data"]] == [b["id"]]
     wrong = approve(client, org.other, b)
-    assert wrong.status_code == 403  # staff hold no approve permission
+    assert wrong.status_code == 422  # a consent step is agreed to, not approved
     r = client.post(f"/api/requests/approvals/{b['id']}/consent",
                     json={"agree": False, "remarks": "Busy that week", "rowVersion": b["rowVersion"]},
                     headers=org.other.headers)

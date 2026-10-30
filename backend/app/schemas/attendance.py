@@ -365,6 +365,12 @@ class BasicSettings(ApiModel):
     row_version: str | None = None
 
 
+class SchedulingSettings(ApiModel):
+    geo_fence_required_on_shift: bool = False
+    ignore_rest_days_for_leaves: bool = False
+    row_version: str | None = None
+
+
 class OvertimeSettings(ApiModel):
     overtime_on_check_in: bool = False
     overtime_on_check_out: bool = False

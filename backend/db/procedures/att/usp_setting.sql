@@ -1,5 +1,5 @@
--- Attendance settings kept in core.company_setting: module 'attendance' (Settings -> Basic) and module
--- 'overtime' (Overtime -> Settings). The keys and their types are checked in app/services/attendance_service.py.
+-- Attendance settings kept in core.company_setting: module 'attendance' (Settings -> Basic), module
+-- 'scheduling' (Settings -> Scheduling) and module 'overtime' (Overtime -> Settings). The keys and their types are checked in app/services/attendance_service.py.
 -- The form's rowVersion is the newest row_version of the module's rows (NULL before the first save).
 
 -- Result set 1: the version; result set 2: the saved keys and values.
@@ -9,7 +9,7 @@ CREATE OR ALTER PROCEDURE [att].[usp_setting_get]
 AS
 BEGIN
     SET NOCOUNT ON;
-    IF @module NOT IN (N'attendance', N'overtime')
+    IF @module NOT IN (N'attendance', N'overtime', N'scheduling')
         THROW 50404, N'Settings not found', 1;
 
     SELECT MAX(row_version) AS row_version
@@ -33,7 +33,7 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    IF @module NOT IN (N'attendance', N'overtime')
+    IF @module NOT IN (N'attendance', N'overtime', N'scheduling')
         THROW 50404, N'Settings not found', 1;
     IF @settings IS NULL OR ISJSON(@settings) = 0
         THROW 50400, N'Settings are not valid', 1;

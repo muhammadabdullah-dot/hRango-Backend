@@ -63,6 +63,11 @@ and `tests/test_departments.py` its test.
   (salary, bank, CNIC, loans, payslips) are held back from managers and executives except for their own
   records, until open question E6 is answered.
 - Users get extra grants or denials per company; a denial wins.
+- The directory (`employees.directory.view`) shows a colleague's work details. Personal details (phones, home
+  address, date of birth, family) need `employees.personal.view`: everyone holds it for themselves, HR for the
+  company. The API blanks those fields and sends `canSeePersonal: false`; an edit by someone without it keeps them.
+- `/auth/me` `role` names the person's real role: Employee, which everyone also holds, only when it is all they hold.
+- Who may decide a request comes from its flow (ACC-13), so every role holds the approval actions.
 
 ## Files
 
@@ -76,7 +81,8 @@ and `tests/test_departments.py` its test.
   (`company_id`, `entity_type` = `'<schema>.<table>'`, `entity_id`, `file_id`, `label`).
 - Responses never expose paths. Give the id, the name and a signed link for records the caller may read:
   `app.core.files.file_url(file_id, ctx.company_id)` (or `schemas.files.FileRef`). Links expire
-  (`FILE_LINK_MINUTES`) and work without the Authorization header.
+  (`FILE_LINK_MINUTES`) and work without the Authorization header. Set `PUBLIC_BASE_URL` to this API's address when
+  the frontend is served from another one, or links are relative to the frontend and images do not load.
 - A file a record still uses cannot be deleted (its foreign keys and attachments refuse).
 
 ## Events, notifications and webhooks
@@ -150,6 +156,20 @@ and add numbered migrations.
 ```
 
 Each run: migrations, procedures, seeds, the permission catalogue, then default roles for every company.
+
+Demo data (Top Edge Technologies: 2 offices, 8 departments with their heads, 26 people with line managers
+and a sign-in each) on a freshly bootstrapped `*_dev` or `*_demo` database, through the API itself:
+
+```
+$env:HRANGO_ADMIN_PASSWORD = "..."; $env:HRANGO_DEMO_PASSWORD = "..."
+.venv\Scripts\python.exe -m scripts.demo --admin-email <the bootstrap admin> --accounts-out ..\demo-accounts.md
+.venv\Scripts\python.exe -m scripts.demo_data --admin-email <the bootstrap admin> --accounts-out ..\demo-accounts.md
+```
+
+`scripts.demo_data` adds two months of activity in every module (attendance from device punches, leaves and
+requests through their approval flows, three closed payrolls, assets, a leaver, projects, newsfeed, surveys, forms,
+hiring, appraisals, training), each done as the person who would do it. `--only time,leave_requests` runs some
+parts; `scripts/demo_data/__init__.py` lists them in their order.
 
 ## Tests
 

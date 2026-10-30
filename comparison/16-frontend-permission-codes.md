@@ -1,5 +1,9 @@
 # Frontend permission codes that the backend does not have
 
+**Fixed 30 Oct 2026** on the frontend branch `rbac-and-photos`: the screens now check the codes below, `can()` reads
+`code@team` and `code@all` for scopes, and `src/app/route-access.ts` is the one list of which screens a page needs
+(the sidebar and a page guard share it). Kept as the record of what changed.
+
 Checked 29 Oct 2026: the frontend on `main` (after PR #2) against the backend's catalogue
 (`backend/app/core/permissions.py`, `app/catalogue/*.py`) and the codes each route requires. Thirty-seven
 codes the screens check do not exist, so with a real sign-in those buttons stay hidden for everyone. The

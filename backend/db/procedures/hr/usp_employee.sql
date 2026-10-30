@@ -1,7 +1,8 @@
 -- Employee records (Talent Management): directory, card, add, edit, switch off and on.
 -- Every procedure takes the permission code the endpoint required and reaches only the employees
 -- that code's scope covers (auth.fn_visible_employees). Another company's or an out-of-scope
--- employee is "not found". The CNIC is returned only to holders of employees.identity.view.
+-- employee is "not found". The CNIC is returned only to holders of employees.identity.view;
+-- can_see_personal tells the API whether to show personal details (employees.personal.view).
 
 CREATE OR ALTER PROCEDURE [hr].[usp_employee_get]
     @company_id      BIGINT,
@@ -19,10 +20,12 @@ BEGIN
 
     SELECT r.*, CASE WHEN iv.employee_id IS NOT NULL THEN e.cnic END AS cnic,
            CAST(CASE WHEN iv.employee_id IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS can_see_identity,
+           CAST(CASE WHEN pv.employee_id IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS can_see_personal,
            (SELECT TOP 1 u.id FROM [auth].[user_account] u WHERE u.employee_id = e.id) AS user_account_id
     FROM [hr].[fn_employee_rows](@company_id) r
     JOIN [hr].[employee] e ON e.id = r.id
     LEFT JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, N'employees.identity.view') iv ON iv.employee_id = r.id
+    LEFT JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, N'employees.personal.view') pv ON pv.employee_id = r.id
     WHERE r.id = @id;
 END
 GO
@@ -85,11 +88,13 @@ BEGIN
 
     SELECT r.*, CASE WHEN iv.employee_id IS NOT NULL THEN e.cnic END AS cnic,
            CAST(CASE WHEN iv.employee_id IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS can_see_identity,
+           CAST(CASE WHEN pv.employee_id IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS can_see_personal,
            CAST(NULL AS BIGINT) AS user_account_id
     FROM @ids i
     JOIN [hr].[fn_employee_rows](@company_id) r ON r.id = i.id
     JOIN [hr].[employee] e ON e.id = r.id
     LEFT JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, N'employees.identity.view') iv ON iv.employee_id = r.id
+    LEFT JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, N'employees.personal.view') pv ON pv.employee_id = r.id
     ORDER BY r.name, r.id
     OFFSET (@page - 1) * @page_size ROWS FETCH NEXT @page_size ROWS ONLY
     OPTION (RECOMPILE);
