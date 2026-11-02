@@ -45,8 +45,9 @@ Administrator; only the owner can, and there is always one.
 2. **Customer above company**: one customer can own several companies. The Account Owner already exists per company
    (below) and moves up to the customer here.
 3. **Executive templates**: CEO / MD, CFO, CTO / COO that a customer copies and adjusts. Job title is not a permission.
-4. **Platform portal** on the separate staff address: the sign-in screen, customers, plans, module switches, and
-   support access.
+4. **Platform portal**: the sign-in screen (`/platform/login`), read-only staff list and activity are built, in the
+   same frontend. Still to come: customers, plans, module switches, support access, adding staff on screen, and the
+   separate staff address.
 
 **Support access rule:** platform staff see no customer HR data by default. Entering a customer needs a reason,
 expires, hides salary and CNIC, and shows in that customer's audit log. Nothing in step 1 can reach a company.
