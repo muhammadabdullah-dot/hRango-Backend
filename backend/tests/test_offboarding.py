@@ -177,6 +177,23 @@ def test_end_of_employment_to_completion_and_rehire(client, db, shop):
     assert twice.status_code == 409
 
 
+def test_leaving_switches_the_sign_in_off_and_a_rehire_switches_it_on(client, db, shop):
+    h, company = shop["h"], shop["company"]
+    emp = factories.employee(db, company)
+    person = factories.login_as(db, client, company, role_codes="employee", employee_id=emp)
+    assert client.get("/api/auth/me", headers=person["headers"]).status_code == 200
+    rec = _eoe(client, h, emp).json()["data"]
+    assert fo.employee_status(db, emp) == "left"
+    assert client.get("/api/auth/me", headers=person["headers"]).status_code == 401
+    login = {"email": person["email"], "password": factories.PASSWORD}
+    assert client.post("/api/auth/login", json=login).status_code == 403
+
+    back = client.patch(f"/api/offboarding/end-of-employment/{rec['id']}/rehire", json={
+        "joiningDate": (TODAY + timedelta(days=10)).isoformat(), "rowVersion": rec["rowVersion"]}, headers=h)
+    assert back.status_code == 200, back.text
+    assert client.post("/api/auth/login", json=login).status_code == 200
+
+
 def test_simple_record_completes_on_save_and_edits(client, db, shop):
     h, company = shop["h"], shop["company"]
     emp = factories.employee(db, company)

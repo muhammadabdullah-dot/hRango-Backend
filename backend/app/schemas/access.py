@@ -17,8 +17,6 @@ class UserIn(ApiModel):
     # New users only; afterwards PUT /access/users/{id}/password.
     password: str | None = Field(None, min_length=8, max_length=200)
     is_active: bool = True
-    # Only a system administrator may set this (ACC-11).
-    is_system_admin: bool = False
     # Extra companies the user may switch to; the active company is always their home on creation.
     # Left out on an edit: unchanged.
     company_ids: list[int] | None = None
@@ -49,7 +47,7 @@ class UserOut(ApiModel):
     home_company_id: str
     home_company_name: str | None
     is_active: bool
-    is_system_admin: bool
+    is_account_owner: bool = False
     last_login_at: datetime | None
     role_names: str | None
     created_at: datetime

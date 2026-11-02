@@ -56,12 +56,11 @@ def employee(db: Db, company_id: int, branch_id: int | None = None, department_i
                    line_manager_id)
 
 
-def user(db: Db, company_id: int, employee_id: int | None = None, role_codes: str = "",
-         is_system_admin: bool = False) -> tuple[int, str]:
+def user(db: Db, company_id: int, employee_id: int | None = None, role_codes: str = "") -> tuple[int, str]:
     email = f"user.{tag()}@test.local"
     user_id = db.call_one("auth.usp_user_provision", company_id=company_id, email=email,
                           password_hash=hash_password(PASSWORD), employee_id=employee_id,
-                          display_name=None if employee_id else "Test User", is_system_admin=is_system_admin,
+                          display_name=None if employee_id else "Test User",
                           role_codes=role_codes)["user_id"]
     return user_id, email
 

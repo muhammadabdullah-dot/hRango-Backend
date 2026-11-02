@@ -25,7 +25,6 @@ class RequestContext:
     company_id: int
     employee_id: int | None
     session_id: int
-    is_system_admin: bool
     name: str
     email: str
     role_name: str
@@ -53,7 +52,7 @@ def get_context(request: Request, creds: HTTPAuthorizationCredentials | None = D
         raise unauthenticated()
     request.state.user_id = row["user_id"]
     return RequestContext(user_id=row["user_id"], company_id=row["company_id"], employee_id=row["employee_id"],
-                          session_id=ids[0], is_system_admin=bool(row["is_system_admin"]), name=row["name"],
+                          session_id=ids[0], name=row["name"],
                           email=row["email"], role_name=row["role_name"], company_name=row["company_name"],
                           company_logo_file_id=row["company_logo_file_id"], photo_file_id=row["photo_file_id"])
 

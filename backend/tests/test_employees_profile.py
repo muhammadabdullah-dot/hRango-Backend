@@ -205,10 +205,10 @@ def test_profile_tabs_scope(client, db, company, admin):
     # Editing reaches only their own record (Employee self-service), so a report's tab is not found.
     assert client.post(_url(emp, "dependents"), headers=lh, json={"firstName": "X", "relation": "son"}).status_code == 404
 
-    # Executives read non-sensitive tabs company-wide; contracts are sensitive and held back.
+    # Executives read tabs company-wide, contracts included: contracts state pay, which executives see.
     executive = factories.login_as(db, client, company, role_codes="executive")["headers"]
     assert client.get(_url(emp, "dependents"), headers=executive).status_code == 200
-    assert client.get(_url(emp, "contracts"), headers=executive).status_code == 403
+    assert client.get(_url(emp, "contracts"), headers=executive).status_code == 200
 
 
 def test_documents_sensitivity_and_expiry(client, db, company, admin):

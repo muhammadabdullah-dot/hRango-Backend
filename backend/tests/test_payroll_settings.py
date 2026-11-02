@@ -69,6 +69,11 @@ def test_formula_expressions_are_checked(client, ctx):
     assert ok.status_code == 201, ok.text
     formula = ok.json()["data"]
     assert formula["isCustom"] is True
+    # Naming a pay item is not a loop, with or without formulas behind the other pay items.
+    item = client.get("/api/payroll/pay-items", params={"pageSize": 100}, headers=h).json()["data"][0]
+    named = client.post("/api/payroll/formulas", headers=h, json={
+        "name": f"Share {factories.tag()}", "expression": "{" + item["name"].lower().replace(" ", "_") + "} * 0.1"})
+    assert named.status_code == 201, named.text
 
     for bad in ("{gross_salary} *", "__import__('os')", "{unknown_thing} + 1", "gross_salary + 1"):
         r = client.post("/api/payroll/formulas", json={"name": f"Bad {factories.tag()}", "expression": bad}, headers=h)

@@ -58,9 +58,8 @@ BEGIN
         DECLARE @missing NVARCHAR(100) = CASE WHEN @id IS NULL THEN N'User not found' ELSE N'Session not found' END;
         THROW 50404, @missing, 1;
     END
-    IF EXISTS (SELECT 1 FROM [auth].[user_account] WHERE id = @user_id AND is_system_admin = 1)
-       AND ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0) = 0
-        THROW 50403, N'Only a system administrator can sign out a system administrator.', 1;
+    IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @user_id, @actor_user_id))
+        THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @ended INT;
     BEGIN TRAN;

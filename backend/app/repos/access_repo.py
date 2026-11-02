@@ -31,8 +31,15 @@ def save_user(db: Db, company_id: int, actor_user_id: int, user_id: int | None, 
     user, roles, companies = db.call_sets(
         "auth.usp_access_user_save", company_id=company_id, actor_user_id=actor_user_id, id=user_id,
         email=f["email"], display_name=f.get("display_name"), employee_id=f.get("employee_id"),
-        password_hash=password_hash, is_active=f.get("is_active", True), is_system_admin=f.get("is_system_admin", False),
+        password_hash=password_hash, is_active=f.get("is_active", True),
         company_ids=_ids(f.get("company_ids")), role_ids=_ids(f.get("role_ids")), row_version=row_version)
+    return user[0], roles, companies
+
+
+def transfer_owner(db: Db, company_id: int, actor_user_id: int, user_id: int,
+                   row_version: bytes) -> tuple[dict[str, Any], list[dict], list[dict]]:
+    user, roles, companies = db.call_sets("auth.usp_access_owner_transfer", company_id=company_id,
+                                          actor_user_id=actor_user_id, id=user_id, row_version=row_version)
     return user[0], roles, companies
 
 

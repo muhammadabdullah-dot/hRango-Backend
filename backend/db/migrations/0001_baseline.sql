@@ -42,6 +42,8 @@ IF SCHEMA_ID(N'trn') IS NULL EXEC(N'CREATE SCHEMA [trn]');
 GO
 IF SCHEMA_ID(N'frm') IS NULL EXEC(N'CREATE SCHEMA [frm]');
 GO
+IF SCHEMA_ID(N'plat') IS NULL EXEC(N'CREATE SCHEMA [plat]');
+GO
 
 CREATE TABLE [org].[company] (
     [id] BIGINT IDENTITY(1,1) NOT NULL,
@@ -582,7 +584,7 @@ CREATE TABLE [auth].[user_account] (
     [email] NVARCHAR(254) NOT NULL,
     [password_hash] NVARCHAR(255) NOT NULL,
     [is_active] BIT NOT NULL CONSTRAINT [DF_user_account_is_active] DEFAULT 0,
-    [is_system_admin] BIT NOT NULL CONSTRAINT [DF_user_account_is_system_admin] DEFAULT 0,
+    [is_account_owner] BIT NOT NULL CONSTRAINT [DF_user_account_is_account_owner] DEFAULT 0,
     [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_user_account_created_at] DEFAULT SYSUTCDATETIME(),
     [created_by] BIGINT NULL,
     [updated_at] DATETIME2(0) NULL,
@@ -4837,6 +4839,55 @@ CREATE TABLE [frm].[form_answer_option] (
     CONSTRAINT [PK_form_answer_option] PRIMARY KEY CLUSTERED ([form_answer_id], [form_field_option_id])
 );
 GO
+CREATE TABLE [plat].[staff_account] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [email] NVARCHAR(254) NOT NULL,
+    [display_name] NVARCHAR(200) NOT NULL,
+    [password_hash] NVARCHAR(255) NOT NULL,
+    [role] NVARCHAR(30) NOT NULL,
+    [is_active] BIT NOT NULL CONSTRAINT [DF_staff_account_is_active] DEFAULT 0,
+    [last_login_at] DATETIME2(0) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_staff_account_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_staff_account] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_staff_account_email] UNIQUE ([email])
+);
+GO
+CREATE TABLE [plat].[staff_session] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [staff_account_id] BIGINT NOT NULL,
+    [device] NVARCHAR(200) NULL,
+    [ip_address] NVARCHAR(45) NULL,
+    [expires_at] DATETIME2(0) NULL,
+    [revoked_at] DATETIME2(0) NULL,
+    [last_seen_at] DATETIME2(0) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_staff_session_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_staff_session] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [plat].[staff_audit] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [staff_account_id] BIGINT NULL,
+    [action_name] NVARCHAR(50) NOT NULL,
+    [entity_type] NVARCHAR(50) NULL,
+    [entity_ref] NVARCHAR(100) NULL,
+    [detail] NVARCHAR(1000) NULL,
+    [ip_address] NVARCHAR(45) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_staff_audit_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_staff_audit] PRIMARY KEY CLUSTERED ([id])
+);
+GO
 
 -- Foreign keys (all ON DELETE NO ACTION)
 ALTER TABLE [org].[company] ADD CONSTRAINT [FK_company_logo_file_id] FOREIGN KEY ([logo_file_id]) REFERENCES [core].[stored_file] ([id]);
@@ -5514,6 +5565,8 @@ ALTER TABLE [frm].[form_answer] ADD CONSTRAINT [FK_form_answer_form_field_id] FO
 ALTER TABLE [frm].[form_answer] ADD CONSTRAINT [FK_form_answer_file_id] FOREIGN KEY ([file_id]) REFERENCES [core].[stored_file] ([id]);
 ALTER TABLE [frm].[form_answer_option] ADD CONSTRAINT [FK_form_answer_option_form_answer_id] FOREIGN KEY ([form_answer_id]) REFERENCES [frm].[form_answer] ([id]);
 ALTER TABLE [frm].[form_answer_option] ADD CONSTRAINT [FK_form_answer_option_form_field_option_id] FOREIGN KEY ([form_field_option_id]) REFERENCES [frm].[form_field_option] ([id]);
+ALTER TABLE [plat].[staff_session] ADD CONSTRAINT [FK_staff_session_staff_account_id] FOREIGN KEY ([staff_account_id]) REFERENCES [plat].[staff_account] ([id]);
+ALTER TABLE [plat].[staff_audit] ADD CONSTRAINT [FK_staff_audit_staff_account_id] FOREIGN KEY ([staff_account_id]) REFERENCES [plat].[staff_account] ([id]);
 GO
 
 -- Indexes
@@ -6049,6 +6102,9 @@ CREATE NONCLUSTERED INDEX [IX_form_response_employee_id_form_id] ON [frm].[form_
 CREATE NONCLUSTERED INDEX [IX_form_answer_form_field_id] ON [frm].[form_answer] ([form_field_id]);
 CREATE NONCLUSTERED INDEX [IX_form_answer_file_id] ON [frm].[form_answer] ([file_id]);
 CREATE NONCLUSTERED INDEX [IX_form_answer_option_form_field_option_id] ON [frm].[form_answer_option] ([form_field_option_id]);
+CREATE NONCLUSTERED INDEX [IX_staff_session_staff_account_id] ON [plat].[staff_session] ([staff_account_id]);
+CREATE NONCLUSTERED INDEX [IX_staff_audit_staff_account_id] ON [plat].[staff_audit] ([staff_account_id]);
+CREATE NONCLUSTERED INDEX [IX_staff_audit_staff_account_id_created_at] ON [plat].[staff_audit] ([staff_account_id], [created_at]);
 GO
 
 -- Descriptions (visible in SSMS and to anyone reading the database)
@@ -6106,6 +6162,7 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'"Update Information": an em
 EXEC sys.sp_addextendedproperty N'MS_Description', N'optional: blank for system users', N'SCHEMA', N'auth', N'TABLE', N'user_account', N'COLUMN', N'employee_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'home company: the one active after sign-in', N'SCHEMA', N'auth', N'TABLE', N'user_account', N'COLUMN', N'company_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'used when there is no employee', N'SCHEMA', N'auth', N'TABLE', N'user_account', N'COLUMN', N'display_name';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the customer''s owner: one per company, and nobody else changes them', N'SCHEMA', N'auth', N'TABLE', N'user_account', N'COLUMN', N'is_account_owner';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'leave.requests.approve', N'SCHEMA', N'auth', N'TABLE', N'permission', N'COLUMN', N'code';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'leave', N'SCHEMA', N'auth', N'TABLE', N'permission', N'COLUMN', N'module';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'leave.requests', N'SCHEMA', N'auth', N'TABLE', N'permission', N'COLUMN', N'screen';
@@ -6742,4 +6799,8 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'checkbox', N'SCHEMA', N'frm
 EXEC sys.sp_addextendedproperty N'MS_Description', N'file', N'SCHEMA', N'frm', N'TABLE', N'form_answer', N'COLUMN', N'file_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'one answered question of a response; the column used depends on the type', N'SCHEMA', N'frm', N'TABLE', N'form_answer';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'the chosen option(s) of a single_choice, dropdown or multiple_choice answer', N'SCHEMA', N'frm', N'TABLE', N'form_answer_option';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'super_admin, admin, support, billing', N'SCHEMA', N'plat', N'TABLE', N'staff_account', N'COLUMN', N'role';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'hRango''s own people: Super Admin, Admin, Support, Billing', N'SCHEMA', N'plat', N'TABLE', N'staff_account';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'one sign-in; revoked_at ends it at once', N'SCHEMA', N'plat', N'TABLE', N'staff_session';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'everything platform staff do; kept when the account goes', N'SCHEMA', N'plat', N'TABLE', N'staff_audit';
 GO

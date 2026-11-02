@@ -160,7 +160,8 @@ def payslips_bulk(db: Db, ctx: RequestContext, ids: list[int], action: str) -> d
     if action == "recalculate":
         changed, problems = service.recalculate(db, ctx, ids)
         return {"data": {"changed": changed, "errors": problems}}
-    return {"data": {"changed": service.set_status(db, ctx, ids, action), "errors": []}}
+    changed, notes = service.set_status(db, ctx, ids, action)
+    return {"data": {"changed": changed, "errors": notes}}
 
 
 def payslip_history(db: Db, ctx: RequestContext, id: int) -> dict:

@@ -223,9 +223,9 @@ def main() -> None:
             api("PUT", f"/access/users/{u['id']}", {
                 "email": detail["email"], "displayName": detail.get("displayName"),
                 "employeeId": int(employees[full]["id"]), "isActive": True,
-                "isSystemAdmin": detail.get("isSystemAdmin", False), "rowVersion": detail["rowVersion"]})
+                "rowVersion": detail["rowVersion"]})
             role_names = ", ".join(r["name"] for r in detail.get("roles", [])) or "Company Administrator"
-            accounts.append((full, person["dept"], person["title"], role_names + " (system administrator)", email, None))
+            accounts.append((full, person["dept"], person["title"], role_names, email, None))
             continue
         api("POST", "/access/users", {"email": email, "employeeId": int(employees[full]["id"]),
                                       "password": demo_password, "roleIds": [int(roles[c]["id"]) for c in role_codes]})
@@ -254,7 +254,7 @@ def write_accounts(path: Path, accounts: list, demo_password: str, admin_passwor
         "these people and passwords are not real.",
         "",
         f"- Password for every account below: `{demo_password}`",
-        f"- Administrator (system admin, linked to Shelley Kannes): `{admin_password}`",
+        f"- Account Owner (Shelley Kannes): `{admin_password}`",
         "",
         "| Name | Department | Job title | Roles | Email |",
         "|---|---|---|---|---|",

@@ -40,8 +40,7 @@ def update_accounts(w, path: Path) -> None:
     rows = []
     for e in w.admin.all("/employees?includeInactive=true"):
         if e["status"] in ("left", "inactive"):
-            rows.append(f"- {e['name']} ({e.get('departmentName')}) has left (status left); their sign-in still "
-                        "works, to read their own records.")
+            rows.append(f"- {e['name']} ({e.get('departmentName')}) has left; their sign-in is switched off.")
         elif e["id"] not in linked:
             email = f"{e['firstName']}.{e['lastName']}@{DOMAIN}".lower()
             w.admin("POST", "/access/users", {"email": email, "employeeId": int(e["id"]), "password": w.demo_password,

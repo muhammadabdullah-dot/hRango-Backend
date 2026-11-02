@@ -27,6 +27,7 @@ State on 29 Oct 2026: 270 tables, 281 procedure files, 693 permission codes, 1,0
 | [14-files-and-events.md](14-files-and-events.md) | Real uploads and events across 11 existing modules (what changed, for the frontend) | changed | 134 |
 | [15-custom-forms.md](15-custom-forms.md) | Custom Form: builder, audience, filling, responses | 15 | 7 |
 | [16-frontend-permission-codes.md](16-frontend-permission-codes.md) | The permission codes the frontend checks that the backend names differently | — | — |
+| [17-platform.md](17-platform.md) | hRango's own staff versus customers: separate accounts, tokens and address | 9 | 8 |
 
 Added on 29 Oct (the frontend's `docs/backend-dependencies.md`): Custom Form (15); Project Management docs,
 notepad, personal list, recents, dashboards, overdue settings, location fields, reminder delivery, the public

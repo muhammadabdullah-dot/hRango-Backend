@@ -179,6 +179,14 @@ BEGIN
         UPDATE [hr].[employee] SET status = N'left', updated_at = @now, updated_by = @actor_user_id
         WHERE id = @employee_id;
 
+        -- Their sign-in goes with them, as when an employee is switched off.
+        UPDATE [auth].[user_account] SET is_active = 0, updated_at = @now, updated_by = @actor_user_id
+        WHERE employee_id = @employee_id AND is_active = 1;
+        UPDATE s SET revoked_at = @now, updated_at = @now
+        FROM [auth].[user_session] s
+        JOIN [auth].[user_account] u ON u.id = s.user_account_id
+        WHERE u.employee_id = @employee_id AND s.revoked_at IS NULL;
+
         UPDATE [hr].[employment_period]
         SET end_date = @lwd, end_of_employment_id = @id, updated_at = @now, updated_by = @actor_user_id
         WHERE id = (SELECT TOP 1 id FROM [hr].[employment_period]
@@ -571,6 +579,9 @@ BEGIN
 
         UPDATE [hr].[employee] SET status = N'active', updated_at = @now, updated_by = @actor_user_id
         WHERE id = @employee_id;
+
+        UPDATE [auth].[user_account] SET is_active = 1, updated_at = @now, updated_by = @actor_user_id
+        WHERE employee_id = @employee_id AND is_active = 0;
 
         UPDATE [sep].[end_of_employment] SET updated_at = @now, updated_by = @actor_user_id
         WHERE id = @id AND row_version = @row_version;

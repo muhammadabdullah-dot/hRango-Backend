@@ -6,8 +6,8 @@ their own department (and its sub-departments), whichever department that is.
 Each role lists (pattern, scope) grants, matched against the catalogue codes with fnmatch, and
 patterns to leave out. The first grant that matches a code sets its scope, so list the wider scope
 first where a role has both. `no_sensitive` leaves out every code marked sensitive (salary, bank,
-CNIC, loan and payslip figures, ACC-9) except for the holder's own records and the patterns in `sensitive_ok`
-— for the managers and executives until open question E6 (who sees salaries) is answered. Because roles are patterns, codes a module adds later reach the
+CNIC, loan and payslip figures, ACC-9) except for the holder's own records and the patterns in `sensitive_ok`.
+Managers hold those back; executives see pay (EXECUTIVE_PAY). Because roles are patterns, codes a module adds later reach the
 right roles on the next seed run; a code a customer removed from a role is not offered again
 (auth.role_default_offer).
 """
@@ -16,6 +16,11 @@ from fnmatch import fnmatchcase
 from app.core.permissions import catalogue_rows
 
 ADMIN_AREAS = ("access.*", "organisation.*", "integrations.*")
+# Executives see salaries (open question E6, decided 2 Nov 2026). CNIC, bank and health details stay private.
+EXECUTIVE_PAY = ["employees.salary.*", "employees.contracts.*", "payroll.dashboard.*", "payroll.payrolls.*",
+                 "payroll.daily_wages.*", "payroll.salary_sheet.*", "payroll.payslips.*", "payroll.salary_revision.*",
+                 "payroll.final_settlement.*", "payroll.reports.*", "performance.increments.*", "requests.promotion.*",
+                 "recruitment.offers.*"]
 SETTINGS = ("*.settings.*",)
 
 # What every member of staff does for themselves.
@@ -132,11 +137,11 @@ ROLES = [
                 ("manpower.e_budgeting.view", "department"), ("recruitment.openings.view", "department"),
                 ("recruitment.applications.view", "department"), ("recruitment.dashboard.view", "department"),
                 *SELF_SERVICE],
-     "exclude": [], "no_sensitive": True,
+     "exclude": [*SETTINGS], "no_sensitive": True,
      "sensitive_ok": ["payroll.vouchers.*", "manpower.budget_approvals.*", "manpower.e_budgeting.view"]},
     {"code": "line_manager", "name": "Line Manager",
      "description": "Reads, schedules and approves for their direct and indirect reports.",
-     "grants": [*_managing("team"), *SELF_SERVICE], "exclude": [], "no_sensitive": True,
+     "grants": [*_managing("team"), *SELF_SERVICE], "exclude": [*SETTINGS], "no_sensitive": True,
      "sensitive_ok": ["payroll.vouchers.*"]},
     {"code": "recruiter", "name": "Recruiter",
      "description": "Recruitment end to end, and the open positions it fills.",
@@ -150,7 +155,7 @@ ROLES = [
      "description": "Dashboards and read-only views for the whole company.",
      "grants": [("dashboard.*", "company"), ("*.view", "company"), ("requests.approvals.approve", "company"),
                 ("requests.approvals.reject", "company")], "exclude": [*ADMIN_AREAS, *SETTINGS],
-     "no_sensitive": True},
+     "no_sensitive": True, "sensitive_ok": EXECUTIVE_PAY},
     {"code": "employee", "name": "Employee",
      "description": "Their own records: time sheet, requests, leave, payslips, assets, benefits, projects.",
      "grants": SELF_SERVICE, "exclude": []},

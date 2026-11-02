@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me"
     # How long a sign-in lasts. There is no refresh token yet; signing in again starts a new session.
     token_hours: int = 12
+    # Platform staff sign in for a working day at most.
+    staff_token_hours: int = 8
     # Comma-separated frontend origins, or "*" for any. "*" is acceptable in development only because auth
     # is a Bearer header and no cookies are used. Set the real origin(s) in .env before any deployment.
     cors_origins: str = "*"

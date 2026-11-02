@@ -1,5 +1,6 @@
 """Users, roles, grants and denials, sessions and the change history (Mini SRS 3.1, ACC-1..16)."""
 from tests import factories
+from tests import factories_requests as fr
 from tests import factories_organisation as fo
 
 
@@ -92,19 +93,28 @@ def test_acc11_self_and_admin_rules(client, db, company):
     assert own_roles.status_code == 403
     own_off = client.patch(f"/api/access/users/{me['user_id']}/disable", headers=h, json={"rowVersion": mine["rowVersion"]})
     assert own_off.status_code == 403
-    make_admin = client.post("/api/access/users", headers=h, json={"email": f"a{factories.tag()}@t.local",
-                                                                   "password": "Start@2026", "displayName": "Root",
-                                                                   "isSystemAdmin": True})
-    assert make_admin.status_code == 403
-    sysadmin_id, _ = factories.user(db, company, role_codes="", is_system_admin=True)
-    target = client.get(f"/api/access/users/{sysadmin_id}", headers=h).json()["data"]
-    assert client.put(f"/api/access/users/{sysadmin_id}/password", headers=h,
-                      json={"password": "Reset@2026"}).status_code == 403
-    assert client.patch(f"/api/access/users/{sysadmin_id}/disable", headers=h,
-                        json={"rowVersion": target["rowVersion"]}).status_code == 403
     own_grant = client.put(f"/api/access/users/{me['user_id']}/overrides", headers=h,
                            json={"code": "payroll.payrolls.view", "effect": "deny"})
     assert own_grant.status_code in (403, 422)
+
+
+def test_a_helpdesk_cannot_take_over_an_administrator(client, db, company):
+    # Holds the users screen but no user or role administration of the kind an administrator has.
+    helpdesk = factories.login_as(db, client, company)
+    for code in ("access.users.view", "access.users.edit"):
+        fr.execute(db, "INSERT auth.user_permission_override (company_id, user_account_id, permission_id, effect, "
+                       "scope, reason) SELECT ?, ?, p.id, N'grant', N'company', N'test' FROM auth.permission p "
+                       "WHERE p.code = ?", company, helpdesk["user_id"], code)
+    h = helpdesk["headers"]
+    admin_id, _ = factories.user(db, company, role_codes="company_admin")
+    staff_id, _ = factories.user(db, company, role_codes="employee")
+    reset = {"password": "Reset@2026"}
+    assert client.put(f"/api/access/users/{admin_id}/password", headers=h, json=reset).status_code == 403
+    target = client.get(f"/api/access/users/{admin_id}", headers=h).json()["data"]
+    assert client.put(f"/api/access/users/{admin_id}", headers=h, json={
+        "email": f"taken{factories.tag()}@t.local", "displayName": "Taken", "rowVersion": target["rowVersion"]
+    }).status_code == 403
+    assert client.put(f"/api/access/users/{staff_id}/password", headers=h, json=reset).status_code == 204
 
 
 def test_cannot_grant_what_you_do_not_hold(client, db, company):
@@ -270,3 +280,52 @@ def test_sessions_and_own_password(client, db, company, admin):
     assert client.get("/api/access/sessions", headers=person["headers"]).status_code == 401
     staff = factories.login_as(db, client, company, role_codes="employee", employee_id=factories.employee(db, company))
     assert client.get("/api/access/sessions", headers=staff["headers"]).status_code == 403
+
+
+def _owner(db, client, company):
+    """A Company Administrator who is the Account Owner, as the installer makes the first one."""
+    me = factories.login_as(db, client, company, role_codes="company_admin")
+    fr.execute(db, "UPDATE auth.user_account SET is_account_owner = 1 WHERE id = ?", me["user_id"])
+    return me
+
+
+def test_administrators_answer_to_the_account_owner(client, db, company):
+    owner = _owner(db, client, company)
+    admin_a = factories.login_as(db, client, company, role_codes="company_admin")
+    admin_b_id, _ = factories.user(db, company, role_codes="company_admin")
+    staff_id, _ = factories.user(db, company, role_codes="employee")
+    reset = {"password": "Reset@2026"}
+
+    # Two administrators cannot reach each other, and nobody reaches the owner.
+    r = client.put(f"/api/access/users/{admin_b_id}/password", headers=admin_a["headers"], json=reset)
+    assert r.status_code == 403 and r.json()["code"] == "ACCOUNT_PROTECTED"
+    assert client.put(f"/api/access/users/{owner['user_id']}/password", headers=admin_a["headers"],
+                      json=reset).status_code == 403
+    target = client.get(f"/api/access/users/{owner['user_id']}", headers=admin_a["headers"]).json()["data"]
+    assert target["isAccountOwner"] is True
+    assert client.patch(f"/api/access/users/{owner['user_id']}/disable", headers=admin_a["headers"],
+                        json={"rowVersion": target["rowVersion"]}).status_code == 403
+    # Administrators still manage everyone else; the owner manages administrators.
+    assert client.put(f"/api/access/users/{staff_id}/password", headers=admin_a["headers"], json=reset).status_code == 204
+    assert client.put(f"/api/access/users/{admin_b_id}/password", headers=owner["headers"], json=reset).status_code == 204
+    assert client.get("/api/auth/me", headers=owner["headers"]).json()["data"]["role"] == "Account Owner"
+
+
+def test_the_account_owner_hands_over_the_role(client, db, company):
+    owner = _owner(db, client, company)
+    admin = factories.login_as(db, client, company, role_codes="company_admin")
+    staff_id, _ = factories.user(db, company, role_codes="employee")
+    h = owner["headers"]
+    staff = client.get(f"/api/access/users/{staff_id}", headers=h).json()["data"]
+    refused = client.patch(f"/api/access/users/{staff_id}/account-owner", headers=h,
+                           json={"rowVersion": staff["rowVersion"]})
+    assert refused.status_code == 422
+    target = client.get(f"/api/access/users/{admin['user_id']}", headers=h).json()["data"]
+    not_owner = client.patch(f"/api/access/users/{owner['user_id']}/account-owner", headers=admin["headers"],
+                             json={"rowVersion": target["rowVersion"]})
+    assert not_owner.status_code == 403
+    done = client.patch(f"/api/access/users/{admin['user_id']}/account-owner", headers=h,
+                        json={"rowVersion": target["rowVersion"]})
+    assert done.status_code == 200, done.text
+    assert done.json()["data"]["isAccountOwner"] is True
+    assert client.get(f"/api/access/users/{owner['user_id']}", headers=admin["headers"]).json()["data"]["isAccountOwner"] is False

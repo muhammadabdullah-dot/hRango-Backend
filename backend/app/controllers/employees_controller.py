@@ -15,7 +15,7 @@ from app.schemas.common import paginated
 from app.schemas.employees import (BankAccountIn, BankAccountOut, ChangeOut, ContractOut, DependentOut, DocumentOut,
                                    EducationOut, EmergencyContactOut, EmployeeIn, EmployeeLookupOut, EmployeeOut,
                                    EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut, ExperienceOut,
-                                   HistoryOut, IdentityIn,
+                                   EmployeePayItemIn, EmployeePayItemOut, EmployeePhotoOut, HistoryOut, IdentityIn,
                                    PhotoIn, SalaryIn, SalaryOut, SkillOut, UpdateRequestIn, UpdateRequestOut)
 from app.schemas.files import FileRef
 from app.services import employees_service as s
@@ -99,6 +99,26 @@ def list_history(db: Db, ctx: RequestContext, employee_id: int) -> dict:
 def list_changes(db: Db, ctx: RequestContext, employee_id: int, paging: PageParams) -> dict:
     total, rows = s.list_changes(db, ctx, employee_id, paging.page, paging.page_size)
     return paginated(rows, total, paging.page, paging.page_size, lambda r: ChangeOut(**r))
+
+
+def photos(db: Db, ctx: RequestContext) -> dict:
+    return {"data": [EmployeePhotoOut(employee_id=r["employee_id"], name=r["name"],
+                                      photo_url=file_url(r["photo_file_id"], ctx.company_id))
+                     for r in s.photos(db, ctx)]}
+
+
+def list_pay_items(db: Db, ctx: RequestContext, employee_id: int) -> dict:
+    return {"data": [EmployeePayItemOut(**_rv(r)) for r in s.list_pay_items(db, ctx, employee_id)]}
+
+
+def save_pay_item(db: Db, ctx: RequestContext, employee_id: int, row_id: int | None, body: EmployeePayItemIn) -> dict:
+    rv = row_version_in(body.row_version) if row_id is not None else None
+    return {"data": EmployeePayItemOut(**_rv(s.save_pay_item(db, ctx, employee_id, row_id,
+                                                             body.model_dump(by_alias=False), rv)))}
+
+
+def delete_pay_item(db: Db, ctx: RequestContext, employee_id: int, row_id: int, row_version: str | None) -> None:
+    s.delete_pay_item(db, ctx, employee_id, row_id, row_version_in(row_version))
 
 
 def list_salary(db: Db, ctx: RequestContext, employee_id: int) -> dict:

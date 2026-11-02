@@ -35,15 +35,12 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @actor_admin BIT = ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0);
-    DECLARE @target_admin BIT = (SELECT u.is_system_admin FROM [auth].[user_account] u
-                                 JOIN [auth].[fn_access_company_users](@company_id) cu ON cu.id = u.id WHERE u.id = @user_id);
-    IF @target_admin IS NULL
+    IF NOT EXISTS (SELECT 1 FROM [auth].[fn_access_company_users](@company_id) cu WHERE cu.id = @user_id)
         THROW 50404, N'User not found', 1;
     IF @user_id = @actor_user_id
         THROW 50403, N'You cannot change your own access.', 1;
-    IF @target_admin = 1 AND @actor_admin = 0
-        THROW 50403, N'Only a system administrator can change a system administrator.', 1;
+    IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @user_id, @actor_user_id))
+        THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
 
     DECLARE @permission_id BIGINT = (SELECT id FROM [auth].[permission] WHERE code = @code);
     IF @permission_id IS NULL
@@ -57,7 +54,7 @@ BEGIN
 
     DECLARE @rank INT = CASE @scope WHEN N'company' THEN 4 WHEN N'department' THEN 3 WHEN N'branch' THEN 3
                                     WHEN N'team' THEN 2 ELSE 1 END;
-    IF @effect = N'grant' AND @actor_admin = 0
+    IF @effect = N'grant'
        AND NOT EXISTS (SELECT 1 FROM [auth].[fn_access_held](@company_id, @actor_user_id) h
                        WHERE h.permission_id = @permission_id AND h.max_rank >= @rank)
         THROW 50403, N'scope|PERMISSION_NOT_HELD|You cannot grant access you do not hold that widely yourself.', 1;
@@ -106,15 +103,12 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @actor_admin BIT = ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0);
-    DECLARE @target_admin BIT = (SELECT u.is_system_admin FROM [auth].[user_account] u
-                                 JOIN [auth].[fn_access_company_users](@company_id) cu ON cu.id = u.id WHERE u.id = @user_id);
-    IF @target_admin IS NULL
+    IF NOT EXISTS (SELECT 1 FROM [auth].[fn_access_company_users](@company_id) cu WHERE cu.id = @user_id)
         THROW 50404, N'User not found', 1;
     IF @user_id = @actor_user_id
         THROW 50403, N'You cannot change your own access.', 1;
-    IF @target_admin = 1 AND @actor_admin = 0
-        THROW 50403, N'Only a system administrator can change a system administrator.', 1;
+    IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @user_id, @actor_user_id))
+        THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
 
     DECLARE @rv BINARY(8), @code NVARCHAR(150), @effect NVARCHAR(30), @scope NVARCHAR(30);
     SELECT @rv = o.row_version, @code = p.code, @effect = o.effect, @scope = o.scope
