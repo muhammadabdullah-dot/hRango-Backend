@@ -41,7 +41,8 @@ Each module gets one file per layer: `app/routers/<module>.py`, `app/controllers
 | 18 | Performance | `perf` | `performance` | 11 |
 | 19 | Training | `trn` | `training` | 6 |
 | 20 | Custom Form | `frm` | `forms` | 8 |
-| | **Total** | | | **270** |
+| 21 | Platform staff | `plat` | `platform` | 3 |
+| | **Total** | | | **273** |
 
 ---
 
@@ -451,14 +452,14 @@ employee 1──* employee (line manager → team)
 
 ```
 auth.user_account
-  id                BIGINT IDENTITY   NN  PK
-  employee_id       BIGINT                    FK → hr.employee    -- optional: blank for system users
-  company_id        BIGINT            NN      FK → org.company    -- home company: the one active after sign-in
-  display_name      NVARCHAR(200)    -- used when there is no employee
-  email             NVARCHAR(254)     NN
-  password_hash     NVARCHAR(255)     NN
-  is_active         BIT               NN
-  is_system_admin   BIT               NN
+  id                 BIGINT IDENTITY   NN  PK
+  employee_id        BIGINT                    FK → hr.employee    -- optional: blank for system users
+  company_id         BIGINT            NN      FK → org.company    -- home company: the one active after sign-in
+  display_name       NVARCHAR(200)    -- used when there is no employee
+  email              NVARCHAR(254)     NN
+  password_hash      NVARCHAR(255)     NN
+  is_active          BIT               NN
+  is_account_owner   BIT               NN    -- the customer's owner: one per company, and nobody else changes them
   UNIQUE (email)
 ```
 
@@ -3777,6 +3778,44 @@ form_field 1──* form_field_option / form_answer
 form_response 1──* form_answer
 form_answer 1──* form_answer_option
 form_field_option 1──* form_answer_option
+```
+
+---
+
+## 21. Platform staff  (`plat`)
+
+```
+plat.staff_account    -- hRango's own people: Super Admin, Admin, Support, Billing
+  id              BIGINT IDENTITY   NN  PK
+  email           NVARCHAR(254)     NN
+  display_name    NVARCHAR(200)     NN
+  password_hash   NVARCHAR(255)     NN
+  role            NVARCHAR(30)      NN    -- super_admin, admin, support, billing
+  is_active       BIT               NN
+  last_login_at   DATETIME2(0)
+  UNIQUE (email)
+```
+
+```
+plat.staff_session    -- one sign-in; revoked_at ends it at once
+  id                 BIGINT IDENTITY   NN  PK
+  staff_account_id   BIGINT            NN      FK → plat.staff_account
+  device             NVARCHAR(200)
+  ip_address         NVARCHAR(45)
+  expires_at         DATETIME2(0)
+  revoked_at         DATETIME2(0)
+  last_seen_at       DATETIME2(0)
+```
+
+```
+plat.staff_audit    -- everything platform staff do; kept when the account goes
+  id                 BIGINT IDENTITY   NN  PK
+  staff_account_id   BIGINT                    FK → plat.staff_account
+  action_name        NVARCHAR(50)      NN
+  entity_type        NVARCHAR(50)
+  entity_ref         NVARCHAR(100)
+  detail             NVARCHAR(1000)
+  ip_address         NVARCHAR(45)
 ```
 
 ---

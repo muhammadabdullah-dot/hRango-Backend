@@ -79,3 +79,46 @@ def test_list_gender_and_placement_filters(client, db, company, admin):
                  "employeeGroupId"):
         r = client.get(f"/api/employees?lineManagerId={manager}&{name}=999999999", headers=h)
         assert r.status_code == 200 and r.json()["meta"]["total"] == 0, name
+
+
+def test_photos_list_for_any_signed_in_person(client, db):
+    company_id = factories.company(db)
+    emp = factories.employee(db, company_id)
+    other = factories.employee(db, company_id)
+    hr = factories.login_as(db, client, company_id, role_codes="hr_manager")
+    staff = factories.login_as(db, client, company_id, role_codes="employee", employee_id=other)
+    assert client.get("/api/employees/photos", headers=staff["headers"]).json()["data"] == []
+    row = client.get(f"/api/employees/{emp}", headers=hr["headers"]).json()["data"]
+    upload = factories.upload(client, hr["headers"], "face.png", factories.PNG_BYTES, "employees")
+    saved = client.put(f"/api/employees/{emp}/photo", headers=hr["headers"],
+                       json={"fileId": upload["id"], "rowVersion": row["rowVersion"]})
+    assert saved.status_code == 200, saved.text
+    rows = client.get("/api/employees/photos", headers=staff["headers"]).json()["data"]
+    assert [r["employeeId"] for r in rows] == [str(emp)] and rows[0]["photoUrl"].startswith("/api/files/")
+    assert client.get("/api/employees/photos").status_code == 401
+
+
+def test_fixed_pay_items_per_person(client, db):
+    company_id = factories.company(db)
+    emp = factories.employee(db, company_id)
+    mine = factories.employee(db, company_id)
+    hr = factories.login_as(db, client, company_id, role_codes="hr_manager", employee_id=mine)
+    h = hr["headers"]
+    item = client.get("/api/payroll/pay-items?pageSize=100", headers=h).json()["data"][0]
+    url = f"/api/employees/{emp}/pay-items"
+    body = {"payItemId": int(item["id"]), "amount": 5000, "effectiveDate": "2026-07-01"}
+    r = client.post(url, json=body, headers=h)
+    assert r.status_code == 201, r.text
+    row = r.json()["data"]
+    assert row["payItemName"] == item["name"] and float(row["amount"]) == 5000
+    assert client.post(url, json=body, headers=h).status_code == 409
+    assert float(client.put(f"{url}/{row['id']}", headers=h, json={**body, "amount": 6000, "rowVersion": row["rowVersion"]}
+                            ).json()["data"]["amount"]) == 6000
+    assert len(client.get(url, headers=h).json()["data"]) == 1
+    # Nobody sets their own pay, whatever their role; other people cannot reach it at all.
+    own = client.post(f"/api/employees/{mine}/pay-items", json=body, headers=h)
+    assert own.status_code == 403 and own.json()["code"] == "OWN_PAY_RECORD"
+    staff = factories.login_as(db, client, company_id, role_codes="employee", employee_id=emp)
+    assert client.post(url, json=body, headers=staff["headers"]).status_code == 403
+    current = client.get(url, headers=h).json()["data"][0]
+    assert client.delete(f"{url}/{row['id']}", params={"rowVersion": current["rowVersion"]}, headers=h).status_code == 204

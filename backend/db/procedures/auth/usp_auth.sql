@@ -63,26 +63,25 @@ BEGIN
     SET @company_id = ISNULL(@company_id, @session_company);
     IF @company_id <> @session_company
        AND NOT EXISTS (SELECT 1 FROM [auth].[user_company] WHERE user_account_id = @user_id AND company_id = @company_id)
-       AND NOT EXISTS (SELECT 1 FROM [auth].[user_account] WHERE id = @user_id AND is_system_admin = 1)
         THROW 50403, N'You do not have access to that company.', 1;
 
     -- Touch the session at most every five minutes, not on every request.
     IF @last_seen IS NULL OR @last_seen < DATEADD(MINUTE, -5, @now)
         UPDATE [auth].[user_session] SET last_seen_at = @now WHERE id = @session_id;
 
-    SELECT u.id AS user_id, @company_id AS company_id, u.employee_id, u.is_system_admin, u.email,
+    SELECT u.id AS user_id, @company_id AS company_id, u.employee_id, u.email,
            (SELECT c.name FROM [org].[company] c WHERE c.id = @company_id) AS company_name,
            (SELECT c.logo_file_id FROM [org].[company] c WHERE c.id = @company_id) AS company_logo_file_id,
            e.photo_file_id,
            COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e.first_name, N' ', e.last_name))), N''), u.display_name, u.email) AS name,
            COALESCE(
+               CASE WHEN u.is_account_owner = 1 THEN N'Account Owner' END,
                (SELECT TOP 1 r.name FROM [auth].[user_role] ur
                 JOIN [auth].[role] r ON r.id = ur.role_id AND r.company_id = @company_id AND r.is_active = 1
                 WHERE ur.user_account_id = u.id
                 -- Employee is what everyone also holds, so it names a person only when it is all they hold.
                 ORDER BY CASE WHEN r.code = N'employee' THEN 1 ELSE 0 END,
                          (SELECT COUNT(*) FROM [auth].[role_permission] rp WHERE rp.role_id = r.id) DESC, r.name),
-               CASE WHEN u.is_system_admin = 1 THEN N'System Administrator' END,
                N'') AS role_name
     FROM [auth].[user_account] u
     LEFT JOIN [hr].[employee] e ON e.id = u.employee_id
@@ -187,7 +186,7 @@ CREATE OR ALTER PROCEDURE [auth].[usp_user_provision]
     @password_hash   NVARCHAR(255),
     @employee_id     BIGINT = NULL,
     @display_name    NVARCHAR(200) = NULL,
-    @is_system_admin BIT = 0,
+    @is_account_owner BIT = 0,
     @role_codes      NVARCHAR(500) = NULL,
     @company_ids     NVARCHAR(500) = NULL
 AS
@@ -201,14 +200,14 @@ BEGIN
     BEGIN TRAN;
         IF @id IS NULL
         BEGIN
-            INSERT [auth].[user_account] (employee_id, company_id, display_name, email, password_hash, is_active, is_system_admin)
-            VALUES (@employee_id, @company_id, @display_name, @email, @password_hash, 1, @is_system_admin);
+            INSERT [auth].[user_account] (employee_id, company_id, display_name, email, password_hash, is_active, is_account_owner)
+            VALUES (@employee_id, @company_id, @display_name, @email, @password_hash, 1, @is_account_owner);
             SET @id = SCOPE_IDENTITY();
         END
         ELSE
             UPDATE [auth].[user_account]
             SET employee_id = @employee_id, company_id = @company_id, display_name = @display_name,
-                password_hash = @password_hash, is_active = 1, is_system_admin = @is_system_admin,
+                password_hash = @password_hash, is_active = 1, is_account_owner = @is_account_owner,
                 updated_at = SYSUTCDATETIME()
             WHERE id = @id;
 

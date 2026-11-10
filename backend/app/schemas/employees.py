@@ -245,6 +245,32 @@ class SalaryIn(ApiModel):
     row_version: str | None = None
 
 
+class EmployeePhotoOut(ApiModel):
+    employee_id: str
+    name: str
+    photo_url: str | None
+
+
+class EmployeePayItemIn(ApiModel):
+    pay_item_id: int
+    amount: Decimal = Field(ge=0, max_digits=18, decimal_places=2)
+    # From when it applies; blank means from the start.
+    effective_date: date | None = None
+    row_version: str | None = None
+
+
+class EmployeePayItemOut(ApiModel):
+    id: str
+    employee_id: str
+    pay_item_id: str
+    pay_item_name: str
+    amount: Decimal
+    effective_date: date | None
+    created_at: datetime
+    updated_at: datetime | None
+    row_version: str
+
+
 class SalaryOut(ApiModel):
     id: str
     employee_id: str

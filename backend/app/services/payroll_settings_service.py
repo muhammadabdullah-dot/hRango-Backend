@@ -150,7 +150,7 @@ def _graph_inputs(items: list[Row], formulas: list[Row]) -> tuple[dict[str, Expr
     for i in items:
         exprs = []
         for fid in (i["employee_formula_id"], i["employer_formula_id"]):
-            if fid in f_by_id:
+            if fid is not None and fid in f_by_id:
                 exprs.append(Expression("{" + slug(f_by_id[fid]["name"]) + "}"))
         if i["eligibility_expression"]:
             try:

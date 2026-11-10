@@ -1,6 +1,6 @@
 """Users, roles, grants and sessions (Mini SRS 3.1). ACC-11 is enforced in the procedures, where
 the actor's effective grants are: nobody grants what they do not hold, changes their own roles or
-grants, or switches themselves off; only a system administrator makes or changes another one.
+grants, or switches themselves off; nobody changes an account holding user or role administration they do not hold.
 These are company-wide administration screens, so the scope a permission is held with does not
 narrow them."""
 from typing import Any
@@ -54,7 +54,7 @@ def set_user_active(db: Db, ctx: RequestContext, user_id: int, active: bool, row
         raise forbidden("You cannot switch off your own account.")
     user, _, _ = access_repo.get_user(db, ctx.company_id, user_id)
     fields = {"email": user["email"], "display_name": user["display_name"], "employee_id": user["employee_id"],
-              "is_active": active, "is_system_admin": bool(user["is_system_admin"]), "company_ids": None,
+              "is_active": active, "company_ids": None,
               "role_ids": None}
     return access_repo.save_user(db, ctx.company_id, ctx.user_id, user_id, fields, None, row_version)
 

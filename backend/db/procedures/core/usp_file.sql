@@ -37,7 +37,7 @@ BEGIN
 END
 GO
 
--- Deletes a file nothing uses any more. Only the person who uploaded it (or a system administrator).
+-- Deletes a file nothing uses any more. Only the person who uploaded it.
 -- Returns the storage path so the caller removes the bytes after the row is gone.
 CREATE OR ALTER PROCEDURE [core].[usp_file_delete]
     @company_id    BIGINT,
@@ -53,7 +53,6 @@ BEGIN
     IF @path IS NULL
         THROW 50404, N'File not found', 1;
     IF ISNULL(@owner, 0) <> @actor_user_id
-       AND NOT EXISTS (SELECT 1 FROM [auth].[user_account] WHERE id = @actor_user_id AND is_system_admin = 1)
         THROW 50403, N'Only the person who uploaded a file can delete it.', 1;
     IF EXISTS (SELECT 1 FROM [core].[attachment] WHERE file_id = @id)
         THROW 50409, N'file|FILE_IN_USE|This file is attached to a record. Remove it there first.', 1;

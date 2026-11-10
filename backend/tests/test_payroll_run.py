@@ -202,8 +202,17 @@ def test_close_locks_the_run(client, db, setup):
     assert len(audit) == 1
 
     # Pay marks a released slip paid; the dashboard and the summary report count it.
-    paid = client.post("/api/payroll/payslips/pay", json={"ids": [s["id"] for s in slips]}, headers=h)
-    assert paid.status_code == 200 and paid.json()["data"]["changed"] == 2
+    # Your own payslip is refused alone and left out of a batch, with the others paid and a note saying so.
+    mine = next(s for s in slips if int(s["employeeId"]) == setup["e1"])
+    others = [s["id"] for s in slips if s["id"] != mine["id"]]
+    own = factories.login_as(db, client, setup["company"], role_codes="payroll_manager", employee_id=setup["e1"])
+    alone = client.post("/api/payroll/payslips/pay", json={"ids": [mine["id"]]}, headers=own["headers"])
+    assert alone.status_code == 403 and alone.json()["code"] == "OWN_PAY_RECORD"
+    batch = client.post("/api/payroll/payslips/pay", json={"ids": [s["id"] for s in slips]}, headers=own["headers"])
+    assert batch.status_code == 200 and batch.json()["data"]["changed"] == len(others)
+    assert "left out" in batch.json()["data"]["errors"][0]
+    paid = client.post("/api/payroll/payslips/pay", json={"ids": [mine["id"]]}, headers=h)
+    assert paid.status_code == 200 and paid.json()["data"]["changed"] == 1
     assert len(fe.notifications(db, setup["company"], setup["e1"], "pay.payslip")) == len(told)  # already told
     dash = client.get("/api/payroll/dashboard", params={"year": 2026}, headers=h).json()["data"]
     assert dash["tiles"]["paidPayslips"] == 2 and dash["salaryStatistics"][0]["month"] == JULY

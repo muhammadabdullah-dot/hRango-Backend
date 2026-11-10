@@ -7,7 +7,8 @@ user_account
   company_id        FK company        home company: the one active after sign-in
   display_name                        used when there is no employee
   email, password_hash
-  is_active, is_system_admin
+  is_active
+  is_account_owner                    the customer's owner: one per company, and nobody else changes them
 
 permission                            the catalogue: one row per view or button (module.screen.action)
   id                PK

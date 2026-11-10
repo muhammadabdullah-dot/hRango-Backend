@@ -6,6 +6,7 @@ from app.core.db import Db
 from app.core.paging import PageParams
 from app.core.rowversion import row_version_in, row_version_out
 from app.middlewares.auth import RequestContext
+from app.repos import access_repo
 from app.schemas.access import (AuditOut, EffectivePermissionOut, EndedOut, OverrideIn, OverrideOut, PermissionOut,
                                 RefOut, RoleCopyIn, RoleDetailOut, RoleIn, RoleOut, RolePermissionsIn, RoleRef,
                                 SessionOut, TickOut, UnitOut, UserDetailOut, UserIn, UserOut, UserRolesIn)
@@ -64,6 +65,10 @@ def update_user(db: Db, ctx: RequestContext, user_id: int, body: UserIn) -> dict
 
 def set_user_active(db: Db, ctx: RequestContext, user_id: int, active: bool, row_version: str) -> dict:
     return _user_detail(s.set_user_active(db, ctx, user_id, active, row_version_in(row_version)))
+
+
+def transfer_owner(db: Db, ctx: RequestContext, user_id: int, row_version: str) -> dict:
+    return _user_detail(access_repo.transfer_owner(db, ctx.company_id, ctx.user_id, user_id, row_version_in(row_version)))
 
 
 def set_user_roles(db: Db, ctx: RequestContext, user_id: int, body: UserRolesIn) -> dict:

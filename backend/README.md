@@ -60,8 +60,11 @@ and `tests/test_departments.py` its test.
 - Default roles (`core/default_roles.py`): Company Administrator, HR Manager, HR Officer, Payroll Manager,
   Finance, Department Head, Line Manager, Recruiter, Executive, Employee. They are patterns over the
   codes, so a module's codes reach the right roles by following the naming above. Sensitive codes
-  (salary, bank, CNIC, loans, payslips) are held back from managers and executives except for their own
-  records, until open question E6 is answered.
+  (salary, bank, CNIC, loans, payslips) are held back from managers except for their own records.
+  Executives see pay (`EXECUTIVE_PAY`), not CNIC, bank or health details.
+- hRango's own staff are not customers: `/api/platform` with their own accounts (`plat`), tokens and roles
+  (Super Admin, Admin, Support, Billing); see `../comparison/17-platform.md`. There is no account that reaches
+  every company: a customer's administrator stays inside their company.
 - Users get extra grants or denials per company; a denial wins.
 - The directory (`employees.directory.view`) shows a colleague's work details. Personal details (phones, home
   address, date of birth, family) need `employees.personal.view`: everyone holds it for themselves, HR for the
@@ -151,6 +154,9 @@ and add numbered migrations.
 .venv\Scripts\python.exe -m scripts.seed --bootstrap --company "Name" --admin-email a@b.c
                                                        first install: company, default roles, administrator
                                                        (password from HRANGO_ADMIN_PASSWORD or asked)
+.venv\Scripts\python.exe -m scripts.seed --platform-admin a@b.c
+                                                       the first platform Super Admin (hRango's own staff;
+                                                       password from HRANGO_PLATFORM_PASSWORD or asked)
 .venv\Scripts\python.exe -m scripts.seed --export hrango_install.sql
                                                        everything as one script for sqlcmd / SSMS
 ```

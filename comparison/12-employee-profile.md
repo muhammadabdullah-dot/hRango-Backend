@@ -176,3 +176,11 @@ never the CNIC, document numbers, salary or bank details.
 - **Work, Benefits and Leaves tabs**: read from their modules; nothing to store here.
 - **Printable ID card** (assets page "employee ID card with photo, QR code"): needs a template design; the photo
   link is available for it.
+
+## Added 2 Nov 2026
+
+- `GET /employees/photos`: everyone in the company with a photo, for any signed-in person. `EmployeeAvatar` takes an
+  `employeeId` and finds the photo itself, so lists whose rows carry only a name show faces.
+- `GET/POST/PUT/DELETE /employees/{id}/pay-items`: fixed allowances and deductions per person, on the Work tab as
+  Fixed Pay Items (`employees.salary.view` / `.edit`). Payroll runs already read `hr.employee_pay_item`; this is the
+  first way to write it. Nobody sets their own (`OWN_PAY_RECORD`).

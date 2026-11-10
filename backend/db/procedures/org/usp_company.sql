@@ -12,7 +12,7 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM [org].[company] c WHERE c.id = @id)
        OR NOT (   @id = @company_id
-               OR EXISTS (SELECT 1 FROM [auth].[user_account] u WHERE u.id = @actor_user_id AND (u.is_system_admin = 1 OR u.company_id = @id))
+               OR EXISTS (SELECT 1 FROM [auth].[user_account] u WHERE u.id = @actor_user_id AND u.company_id = @id)
                OR EXISTS (SELECT 1 FROM [auth].[user_company] uc WHERE uc.user_account_id = @actor_user_id AND uc.company_id = @id))
         THROW 50404, N'Company not found', 1;
 
@@ -39,13 +39,12 @@ BEGIN
 
     DECLARE @pattern NVARCHAR(500) = CASE WHEN NULLIF(LTRIM(RTRIM(@search)), N'') IS NULL THEN NULL
         ELSE N'%' + REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@search)), N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]') + N'%' END;
-    DECLARE @admin BIT = ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0);
     DECLARE @home BIGINT = (SELECT company_id FROM [auth].[user_account] WHERE id = @actor_user_id);
 
     DECLARE @mine TABLE (id BIGINT PRIMARY KEY);
     INSERT @mine
     SELECT c.id FROM [org].[company] c
-    WHERE (@admin = 1 OR c.id = @company_id OR c.id = @home
+    WHERE (c.id = @company_id OR c.id = @home
            OR EXISTS (SELECT 1 FROM [auth].[user_company] uc WHERE uc.user_account_id = @actor_user_id AND uc.company_id = c.id))
       AND (@pattern IS NULL OR c.name LIKE @pattern OR c.legal_name LIKE @pattern);
 
@@ -140,7 +139,7 @@ BEGIN
 
         IF @o_rv IS NULL
            OR NOT (   @id = @company_id
-                   OR EXISTS (SELECT 1 FROM [auth].[user_account] u WHERE u.id = @actor_user_id AND (u.is_system_admin = 1 OR u.company_id = @id))
+                   OR EXISTS (SELECT 1 FROM [auth].[user_account] u WHERE u.id = @actor_user_id AND u.company_id = @id)
                    OR EXISTS (SELECT 1 FROM [auth].[user_company] uc WHERE uc.user_account_id = @actor_user_id AND uc.company_id = @id))
             THROW 50404, N'Company not found', 1;
         IF @o_rv <> @row_version

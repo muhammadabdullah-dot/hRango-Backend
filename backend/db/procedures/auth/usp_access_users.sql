@@ -1,6 +1,6 @@
 -- Users screen (Mini SRS 3.1): sign-in accounts of the active company, their companies and roles.
 -- ACC-11: nobody grants what they do not hold, changes their own roles or switches themselves off;
--- only a system administrator makes, changes or switches off another system administrator.
+-- nobody changes an account that holds user or role administration they do not hold themselves.
 -- ACC-15: every change to a user's roles is written to core.audit_log (entity auth.user_account).
 
 CREATE OR ALTER PROCEDURE [auth].[usp_access_user_get]
@@ -16,7 +16,7 @@ BEGIN
     SELECT u.id, u.email, u.display_name,
            COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e.first_name, N' ', e.last_name))), N''), u.display_name, u.email) AS name,
            u.employee_id, e.code AS employee_code, u.company_id AS home_company_id, hc.name AS home_company_name,
-           u.is_active, u.is_system_admin, (SELECT MAX(s.created_at) FROM [auth].[user_session] s WHERE s.user_account_id = u.id) AS last_login_at,
+           u.is_active, u.is_account_owner, (SELECT MAX(s.created_at) FROM [auth].[user_session] s WHERE s.user_account_id = u.id) AS last_login_at,
            (SELECT STRING_AGG(r.name, N', ') FROM [auth].[user_role] ur
             JOIN [auth].[role] r ON r.id = ur.role_id AND r.company_id = @company_id
             WHERE ur.user_account_id = u.id) AS role_names,
@@ -74,7 +74,7 @@ BEGIN
     SELECT u.id, u.email, u.display_name,
            COALESCE(NULLIF(LTRIM(RTRIM(CONCAT(e.first_name, N' ', e.last_name))), N''), u.display_name, u.email) AS name,
            u.employee_id, e.code AS employee_code, u.company_id AS home_company_id, hc.name AS home_company_name,
-           u.is_active, u.is_system_admin, (SELECT MAX(s.created_at) FROM [auth].[user_session] s WHERE s.user_account_id = u.id) AS last_login_at,
+           u.is_active, u.is_account_owner, (SELECT MAX(s.created_at) FROM [auth].[user_session] s WHERE s.user_account_id = u.id) AS last_login_at,
            (SELECT STRING_AGG(r.name, N', ') FROM [auth].[user_role] ur
             JOIN [auth].[role] r ON r.id = ur.role_id AND r.company_id = @company_id
             WHERE ur.user_account_id = u.id) AS role_names,
@@ -102,7 +102,6 @@ CREATE OR ALTER PROCEDURE [auth].[usp_access_user_save]
     @employee_id     BIGINT = NULL,
     @password_hash   NVARCHAR(255) = NULL,
     @is_active       BIT = 1,
-    @is_system_admin BIT = 0,
     @company_ids     NVARCHAR(MAX) = NULL,
     @role_ids        NVARCHAR(MAX) = NULL,
     @row_version     BINARY(8) = NULL
@@ -113,14 +112,13 @@ BEGIN
 
     SET @email = LOWER(NULLIF(LTRIM(RTRIM(@email)), N''));
     SET @display_name = NULLIF(LTRIM(RTRIM(@display_name)), N'');
-    DECLARE @actor_admin BIT = ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0);
-    DECLARE @old_email NVARCHAR(254), @old_display NVARCHAR(200), @old_employee BIGINT, @old_active BIT, @old_admin BIT,
+    DECLARE @old_email NVARCHAR(254), @old_display NVARCHAR(200), @old_employee BIGINT, @old_active BIT,
             @old_rv BINARY(8);
 
     IF @id IS NOT NULL
     BEGIN
         SELECT @old_email = u.email, @old_display = u.display_name, @old_employee = u.employee_id,
-               @old_active = u.is_active, @old_admin = u.is_system_admin, @old_rv = u.row_version
+               @old_active = u.is_active, @old_rv = u.row_version
         FROM [auth].[user_account] u
         JOIN [auth].[fn_access_company_users](@company_id) cu ON cu.id = u.id
         WHERE u.id = @id;
@@ -131,20 +129,16 @@ BEGIN
             THROW 50400, N'rowVersion|rowVersion is required to edit a user.', 1;
         IF @old_rv <> @row_version
             THROW 50409, N'Someone else changed this user. Reload it and try again', 1;
-        IF @old_admin = 1 AND @actor_admin = 0
-            THROW 50403, N'Only a system administrator can change a system administrator.', 1;
+        IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @id, @actor_user_id))
+            THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
         IF @id = @actor_user_id AND @is_active = 0
             THROW 50403, N'isActive|You cannot switch off your own account.', 1;
-        IF @id = @actor_user_id AND @is_system_admin <> @old_admin
-            THROW 50403, N'isSystemAdmin|You cannot change your own administrator rights.', 1;
     END
     ELSE IF @password_hash IS NULL
         THROW 50400, N'password|A password is required for a new user.', 1;
 
     IF @email IS NULL OR @email NOT LIKE N'%_@_%._%'
         THROW 50400, N'email|Enter a valid email address.', 1;
-    IF @is_system_admin = 1 AND @actor_admin = 0 AND (@id IS NULL OR @old_admin = 0)
-        THROW 50403, N'isSystemAdmin|Only a system administrator can make another one.', 1;
     IF EXISTS (SELECT 1 FROM [auth].[user_account] WHERE email = @email AND (@id IS NULL OR id <> @id))
         THROW 50409, N'email|USER_EMAIL_DUPLICATE|Another user signs in with this email.', 1;
     IF @employee_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM [hr].[employee] WHERE id = @employee_id AND company_id = @company_id)
@@ -158,7 +152,7 @@ BEGIN
     DECLARE @actor_home BIGINT = (SELECT company_id FROM [auth].[user_account] WHERE id = @actor_user_id);
     DECLARE @mine TABLE (id BIGINT PRIMARY KEY);
     INSERT @mine SELECT c.id FROM [org].[company] c
-    WHERE @actor_admin = 1 OR c.id = @company_id OR c.id = @actor_home
+    WHERE c.id = @company_id OR c.id = @actor_home
        OR EXISTS (SELECT 1 FROM [auth].[user_company] uc WHERE uc.user_account_id = @actor_user_id AND uc.company_id = c.id);
 
     DECLARE @wanted TABLE (id BIGINT PRIMARY KEY);
@@ -179,7 +173,7 @@ BEGIN
         INSERT @roles SELECT DISTINCT TRY_CAST(value AS BIGINT) FROM OPENJSON(@role_ids) WHERE TRY_CAST(value AS BIGINT) IS NOT NULL;
         IF EXISTS (SELECT 1 FROM @roles r WHERE NOT EXISTS (SELECT 1 FROM [auth].[role] x WHERE x.id = r.id AND x.company_id = @company_id AND x.is_active = 1))
             THROW 50400, N'roleIds|A role was not found or is retired.', 1;
-        IF @actor_admin = 0 AND EXISTS (
+        IF EXISTS (
             SELECT 1 FROM @roles r
             JOIN [auth].[role_permission] rp ON rp.role_id = r.id
             WHERE NOT EXISTS (SELECT 1 FROM [auth].[fn_access_held](@company_id, @actor_user_id) h
@@ -193,8 +187,8 @@ BEGIN
     BEGIN TRAN;
     IF @id IS NULL
     BEGIN
-        INSERT [auth].[user_account] (employee_id, company_id, display_name, email, password_hash, is_active, is_system_admin, created_by)
-        VALUES (@employee_id, @company_id, @display_name, @email, @password_hash, ISNULL(@is_active, 1), ISNULL(@is_system_admin, 0), @actor_user_id);
+        INSERT [auth].[user_account] (employee_id, company_id, display_name, email, password_hash, is_active, created_by)
+        VALUES (@employee_id, @company_id, @display_name, @email, @password_hash, ISNULL(@is_active, 1), @actor_user_id);
         SET @id = SCOPE_IDENTITY();
 
         INSERT [auth].[user_company] (user_account_id, company_id, created_by)
@@ -213,7 +207,7 @@ BEGIN
     BEGIN
         UPDATE [auth].[user_account]
         SET email = @email, display_name = @display_name, employee_id = @employee_id, is_active = @is_active,
-            is_system_admin = @is_system_admin, updated_at = @now, updated_by = @actor_user_id
+            updated_at = @now, updated_by = @actor_user_id
         WHERE id = @id AND row_version = @row_version;
         IF @@ROWCOUNT = 0
             THROW 50409, N'Someone else changed this user. Reload it and try again', 1;
@@ -245,7 +239,6 @@ BEGIN
             (N'email', @old_email, @email), (N'display_name', @old_display, @display_name),
             (N'employee_id', CONVERT(NVARCHAR(30), @old_employee), CONVERT(NVARCHAR(30), @employee_id)),
             (N'is_active', CONVERT(NVARCHAR(5), @old_active), CONVERT(NVARCHAR(5), @is_active)),
-            (N'is_system_admin', CONVERT(NVARCHAR(5), @old_admin), CONVERT(NVARCHAR(5), @is_system_admin)),
             (N'companies', @old_companies, @new_companies)
         ) f (field_name, old_value, new_value)
         WHERE EXISTS (SELECT f.old_value EXCEPT SELECT f.new_value);
@@ -269,9 +262,8 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @actor_admin BIT = ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0);
-    DECLARE @rv BINARY(8), @target_admin BIT;
-    SELECT @rv = u.row_version, @target_admin = u.is_system_admin
+    DECLARE @rv BINARY(8);
+    SELECT @rv = u.row_version
     FROM [auth].[user_account] u JOIN [auth].[fn_access_company_users](@company_id) cu ON cu.id = u.id
     WHERE u.id = @id;
 
@@ -281,8 +273,8 @@ BEGIN
         THROW 50409, N'Someone else changed this user. Reload it and try again', 1;
     IF @id = @actor_user_id
         THROW 50403, N'You cannot change your own roles.', 1;
-    IF @target_admin = 1 AND @actor_admin = 0
-        THROW 50403, N'Only a system administrator can change a system administrator.', 1;
+    IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @id, @actor_user_id))
+        THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
     IF ISJSON(@role_ids) = 0
         THROW 50400, N'roleIds|Not a list of roles.', 1;
 
@@ -296,7 +288,7 @@ BEGIN
     WHERE NOT EXISTS (SELECT 1 FROM [auth].[user_role] ur WHERE ur.user_account_id = @id AND ur.role_id = w.id);
     IF EXISTS (SELECT 1 FROM @added a JOIN [auth].[role] r ON r.id = a.id WHERE r.is_active = 0)
         THROW 50400, N'roleIds|A retired role cannot be given.', 1;
-    IF @actor_admin = 0 AND EXISTS (
+    IF EXISTS (
         SELECT 1 FROM @added a
         JOIN [auth].[role_permission] rp ON rp.role_id = a.id
         WHERE NOT EXISTS (SELECT 1 FROM [auth].[fn_access_held](@company_id, @actor_user_id) h
@@ -339,13 +331,10 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @actor_admin BIT = ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0);
-    DECLARE @target_admin BIT = (SELECT u.is_system_admin FROM [auth].[user_account] u
-                                 JOIN [auth].[fn_access_company_users](@company_id) cu ON cu.id = u.id WHERE u.id = @id);
-    IF @target_admin IS NULL
+    IF NOT EXISTS (SELECT 1 FROM [auth].[fn_access_company_users](@company_id) cu WHERE cu.id = @id)
         THROW 50404, N'User not found', 1;
-    IF @target_admin = 1 AND @actor_admin = 0
-        THROW 50403, N'Only a system administrator can change a system administrator.', 1;
+    IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @id, @actor_user_id))
+        THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;
@@ -354,6 +343,46 @@ BEGIN
         INSERT [core].[audit_log] (company_id, entity_type, entity_id, field_name, action_name, performed_by_user_id, performed_at)
         VALUES (@company_id, N'auth.user_account', @id, N'password', N'password_reset', @actor_user_id, @now);
     COMMIT;
+END
+GO
+
+-- Hands the company's Account Owner role to another administrator. Only the owner does this; there is always one.
+CREATE OR ALTER PROCEDURE [auth].[usp_access_owner_transfer]
+    @company_id    BIGINT,
+    @actor_user_id BIGINT,
+    @id            BIGINT,
+    @row_version   BINARY(8)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    IF NOT EXISTS (SELECT 1 FROM [auth].[user_account] WHERE id = @actor_user_id AND is_account_owner = 1)
+        THROW 50403, N'user|ACCOUNT_OWNER_ONLY|Only the Account Owner can hand over this role.', 1;
+    DECLARE @rv BINARY(8), @active BIT;
+    SELECT @rv = u.row_version, @active = u.is_active
+    FROM [auth].[user_account] u JOIN [auth].[fn_access_company_users](@company_id) cu ON cu.id = u.id
+    WHERE u.id = @id;
+    IF @rv IS NULL
+        THROW 50404, N'User not found', 1;
+    IF @rv <> @row_version
+        THROW 50409, N'Someone else changed this user. Reload it and try again', 1;
+    IF @id = @actor_user_id
+        THROW 50400, N'id|You are already the Account Owner.', 1;
+    IF @active = 0 OR NOT EXISTS (SELECT 1 FROM [auth].[fn_access_held](@company_id, @id) h
+                                  WHERE h.code = N'access.users.edit' AND h.max_rank = 4)
+        THROW 50400, N'id|The new Account Owner must be an active Company Administrator.', 1;
+
+    DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
+    BEGIN TRAN;
+        UPDATE [auth].[user_account] SET is_account_owner = 0, updated_at = @now, updated_by = @actor_user_id
+        WHERE id = @actor_user_id;
+        UPDATE [auth].[user_account] SET is_account_owner = 1, updated_at = @now, updated_by = @actor_user_id
+        WHERE id = @id;
+        INSERT [core].[audit_log] (company_id, entity_type, entity_id, field_name, action_name, performed_by_user_id, performed_at)
+        VALUES (@company_id, N'auth.user_account', @id, N'is_account_owner', N'owner_transferred', @actor_user_id, @now);
+    COMMIT;
+
+    EXEC [auth].[usp_access_user_get] @company_id = @company_id, @id = @id;
 END
 GO
 

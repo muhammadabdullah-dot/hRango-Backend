@@ -147,7 +147,7 @@ def apply_migrations(conn: pyodbc.Connection) -> int:
     return count
 
 
-def install(create: bool, reset: bool, bootstrap: tuple[str, str] | None) -> None:
+def install(create: bool, reset: bool, bootstrap: tuple[str, str] | None, platform_email: str | None = None) -> None:
     if not settings.db_url:
         sys.exit("DB_URL is not set in .env")
     if create or reset:
@@ -165,6 +165,8 @@ def install(create: bool, reset: bool, bootstrap: tuple[str, str] | None) -> Non
     print(f"permissions: {r.total} in catalogue, {r.added} added, {r.retired} no longer in code")
     if bootstrap:
         bootstrap_company(cur, *bootstrap)
+    if platform_email:
+        platform_admin(cur, platform_email)
     roles = roles_json()
     for (company_id,) in cur.execute("SELECT id FROM org.company ORDER BY id").fetchall():
         r = cur.execute("EXEC auth.usp_role_defaults_apply @company_id = ?, @roles = ?", company_id, roles).fetchone()
@@ -173,16 +175,31 @@ def install(create: bool, reset: bool, bootstrap: tuple[str, str] | None) -> Non
 
 
 def bootstrap_company(cur: pyodbc.Cursor, company: str, admin_email: str) -> None:
-    """First install: the company, its default roles and a system administrator."""
+    """First install: the company, its default roles and its Company Administrator."""
     password = os.environ.get("HRANGO_ADMIN_PASSWORD") or getpass.getpass(f"Password for {admin_email}: ")
     if len(password) < 8:
         sys.exit("The administrator password must be at least 8 characters.")
     company_id = cur.execute("EXEC org.usp_company_provision @name = ?", company).fetchval()
     cur.execute("EXEC auth.usp_role_defaults_apply @company_id = ?, @roles = ?", company_id, roles_json()).fetchall()
     cur.execute("EXEC auth.usp_user_provision @company_id = ?, @email = ?, @password_hash = ?, @display_name = ?, "
-                "@is_system_admin = 1, @role_codes = ?", company_id, admin_email, hash_password(password),
+                "@is_account_owner = 1, @role_codes = ?", company_id, admin_email, hash_password(password),
                 "Administrator", "company_admin").fetchall()
     print(f"bootstrap: company {company!r} (id {company_id}), administrator {admin_email}")
+
+
+def platform_admin(cur: pyodbc.Cursor, email: str) -> None:
+    """The first Super Admin: hRango's own staff, not part of any customer."""
+    password = os.environ.get("HRANGO_PLATFORM_PASSWORD") or getpass.getpass(f"Password for {email}: ")
+    if len(password) < 12:
+        sys.exit("The Super Admin password must be at least 12 characters.")
+    email = email.strip().lower()
+    if cur.execute("SELECT 1 FROM plat.staff_account WHERE email = ?", email).fetchone():
+        print(f"platform: {email} already exists")
+        return
+    cur.execute("EXEC plat.usp_staff_save @actor_id = NULL, @id = NULL, @email = ?, @display_name = ?, @role = ?, "
+                "@is_active = 1, @password_hash = ?", email, "Super Admin", "super_admin",
+                hash_password(password)).fetchall()
+    print(f"platform: Super Admin {email}")
 
 
 # ---------------------------------------------------------------- one-file export
@@ -221,6 +238,8 @@ def main() -> None:
     p.add_argument("--bootstrap", action="store_true", help="create the first company and its administrator")
     p.add_argument("--company", help="company name for --bootstrap")
     p.add_argument("--admin-email", help="administrator email for --bootstrap")
+    p.add_argument("--platform-admin", metavar="EMAIL", help="create the first platform Super Admin "
+                   "(password from HRANGO_PLATFORM_PASSWORD or asked)")
     p.add_argument("--migrations-dir", help="read migrations from this folder (parallel development)")
     p.add_argument("--keep-going", action="store_true", help="report failing procedure/seed files and continue")
     a = p.parse_args()
@@ -233,7 +252,7 @@ def main() -> None:
     if a.export:
         export(Path(a.export))
     else:
-        install(a.create, a.reset, (a.company, a.admin_email) if a.bootstrap else None)
+        install(a.create, a.reset, (a.company, a.admin_email) if a.bootstrap else None, a.platform_admin)
 
 
 if __name__ == "__main__":

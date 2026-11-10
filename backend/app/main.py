@@ -18,7 +18,7 @@ setup_logging()
 ROUTERS = ("auth", "files", "access", "integrations", "organisation", "employees", "dashboard", "inbox", "attendance",
            "roster", "scheduling", "warning", "requests", "leaves", "loans", "payroll", "assets", "offboarding",
            "manpower", "recruitment", "performance", "training", "benefits", "engagement", "projects", "forms",
-           "public", "integrations_storage")
+           "public", "integrations_storage", "platform")
 
 
 

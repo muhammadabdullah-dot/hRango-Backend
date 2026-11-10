@@ -130,7 +130,7 @@ GO
 
 -- Replaces a role's ticks. @ticks: [{"code", "scope", "units": [{"unitType", "unitId"}]}].
 -- ACC-11: a tick that is new, or wider than before, must be held by the actor with at least that
--- scope (a system administrator holds everything).
+-- scope.
 CREATE OR ALTER PROCEDURE [auth].[usp_access_role_permissions_save]
     @company_id    BIGINT,
     @actor_user_id BIGINT,
@@ -183,20 +183,17 @@ BEGIN
                           OR (u.unit_type = N'location' AND EXISTS (SELECT 1 FROM [org].[location] l WHERE l.id = u.unit_id AND l.company_id = @company_id))))
         THROW 50400, N'permissions|A selected unit was not found in this company.', 1;
 
-    IF ISNULL((SELECT is_system_admin FROM [auth].[user_account] WHERE id = @actor_user_id), 0) = 0
+    DECLARE @over NVARCHAR(150) = (
+        SELECT TOP 1 t.code FROM @t t
+        LEFT JOIN [auth].[role_permission] old ON old.role_id = @id AND old.permission_id = t.permission_id
+        WHERE (old.permission_id IS NULL OR old.scope <> t.scope)
+          AND NOT EXISTS (SELECT 1 FROM [auth].[fn_access_held](@company_id, @actor_user_id) h
+                          WHERE h.permission_id = t.permission_id AND h.max_rank >= t.rnk));
+    IF @over IS NOT NULL
     BEGIN
-        DECLARE @over NVARCHAR(150) = (
-            SELECT TOP 1 t.code FROM @t t
-            LEFT JOIN [auth].[role_permission] old ON old.role_id = @id AND old.permission_id = t.permission_id
-            WHERE (old.permission_id IS NULL OR old.scope <> t.scope)
-              AND NOT EXISTS (SELECT 1 FROM [auth].[fn_access_held](@company_id, @actor_user_id) h
-                              WHERE h.permission_id = t.permission_id AND h.max_rank >= t.rnk));
-        IF @over IS NOT NULL
-        BEGIN
-            DECLARE @m2 NVARCHAR(400) = CONCAT(N'permissions|PERMISSION_NOT_HELD|You cannot give ', @over,
-                                               N' with that scope: you do not hold it that widely yourself.');
-            THROW 50403, @m2, 1;
-        END
+        DECLARE @m2 NVARCHAR(400) = CONCAT(N'permissions|PERMISSION_NOT_HELD|You cannot give ', @over,
+                                           N' with that scope: you do not hold it that widely yourself.');
+        THROW 50403, @m2, 1;
     END
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();

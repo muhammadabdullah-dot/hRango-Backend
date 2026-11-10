@@ -27,6 +27,28 @@ def employee_summary(db: Db, company_id: int, actor_user_id: int, permission_cod
                        permission_code=permission_code, **filters)
 
 
+def photos(db: Db, company_id: int) -> list[dict[str, Any]]:
+    return db.call("hr.usp_employee_photos", company_id=company_id)
+
+
+def list_pay_items(db: Db, company_id: int, actor_user_id: int, employee_id: int) -> list[dict[str, Any]]:
+    return db.call("hr.usp_employee_pay_item_list", company_id=company_id, actor_user_id=actor_user_id,
+                   employee_id=employee_id)
+
+
+def save_pay_item(db: Db, company_id: int, actor_user_id: int, employee_id: int, row_id: int | None,
+                  f: dict[str, Any], row_version: bytes | None) -> dict[str, Any]:
+    return db.call_one("hr.usp_employee_pay_item_save", company_id=company_id, actor_user_id=actor_user_id,
+                       employee_id=employee_id, id=row_id, pay_item_id=f["pay_item_id"], amount=f["amount"],
+                       effective_date=f["effective_date"], row_version=row_version)
+
+
+def delete_pay_item(db: Db, company_id: int, actor_user_id: int, employee_id: int, row_id: int,
+                    row_version: bytes) -> None:
+    db.call("hr.usp_employee_pay_item_delete", company_id=company_id, actor_user_id=actor_user_id,
+            employee_id=employee_id, id=row_id, row_version=row_version)
+
+
 def lookup_employees(db: Db, company_id: int, actor_user_id: int, permission_code: str, search: str | None,
                      branch_id: int | None, department_id: int | None, include_inactive: bool,
                      page: int, page_size: int) -> tuple[int, list[dict[str, Any]]]:

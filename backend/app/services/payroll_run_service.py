@@ -223,13 +223,24 @@ def edit_payslip(db: Db, ctx: RequestContext, id: int, body: PayslipEditIn, row_
     return head, lines, display(payroll_settings_service.load(db, ctx.company_id))
 
 
-def set_status(db: Db, ctx: RequestContext, ids: list[int], action: str) -> int:
+def set_status(db: Db, ctx: RequestContext, ids: list[int], action: str) -> tuple[int, list[str]]:
+    """Pay leaves the caller's own payslip out of a batch and says so; asked for alone, it is refused."""
     code = CODES["payslip_process"] if action == "pay" else CODES["payslip_edit"]
+    notes: list[str] = []
     if action == "pay" and ctx.employee_id is not None:
+        others = []
         for id in ids:
             head, _ = repo.get_payslip(db, ctx.company_id, ctx.user_id, code, id)
-            _not_mine(ctx, head["employee_id"])
-    return repo.set_payslip_status(db, ctx.company_id, ctx.user_id, code, json.dumps(ids), action)
+            if head["employee_id"] is not None and int(head["employee_id"]) == ctx.employee_id:
+                if len(ids) == 1:
+                    _not_mine(ctx, head["employee_id"])
+                notes.append("Your own payslip was left out: someone else has to pay it.")
+            else:
+                others.append(id)
+        ids = others
+    if not ids:
+        return 0, notes
+    return repo.set_payslip_status(db, ctx.company_id, ctx.user_id, code, json.dumps(ids), action), notes
 
 
 def recalculate(db: Db, ctx: RequestContext, ids: list[int]) -> tuple[int, list[str]]:

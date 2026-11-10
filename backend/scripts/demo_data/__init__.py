@@ -23,7 +23,7 @@ from app.main import app  # noqa: E402
 from scripts.demo import DOMAIN, PEOPLE, Api  # noqa: E402
 
 # Run order. Each name is a module in this package.
-PARTS = ("time", "leave_requests", "payroll_assets", "work", "talent")
+PARTS = ("time", "leave_requests", "payroll_assets", "work", "talent", "backdate")
 
 
 @dataclass

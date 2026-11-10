@@ -25,9 +25,9 @@ def upload(db: Db, ctx: RequestContext, stream: BinaryIO, name: str | None, modu
 
 
 def get_own(db: Db, ctx: RequestContext, file_id: int) -> dict[str, Any]:
-    """A file's details for the person who uploaded it (or a system administrator)."""
+    """A file's details for the person who uploaded it """
     row = files_repo.get(db, ctx.company_id, file_id)
-    if row is None or (row["uploaded_by_user_id"] != ctx.user_id and not ctx.is_system_admin):
+    if row is None or row["uploaded_by_user_id"] != ctx.user_id:
         raise not_found("File")
     return row
 

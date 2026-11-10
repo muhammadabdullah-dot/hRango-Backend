@@ -133,6 +133,31 @@ def delete_salary(db: Db, ctx: RequestContext, employee_id: int, salary_id: int,
     employees_repo.delete_salary(db, ctx.company_id, ctx.user_id, employee_id, salary_id, row_version)
 
 
+def _not_my_pay(ctx: RequestContext, employee_id: int) -> None:
+    """Nobody changes their own pay, whatever their role (payroll's own rule)."""
+    if ctx.employee_id == employee_id:
+        raise AppError(403, "OWN_PAY_RECORD", "You cannot change your own pay records.")
+
+
+def photos(db: Db, ctx: RequestContext) -> list[dict[str, Any]]:
+    return employees_repo.photos(db, ctx.company_id)
+
+
+def list_pay_items(db: Db, ctx: RequestContext, employee_id: int) -> list[dict[str, Any]]:
+    return employees_repo.list_pay_items(db, ctx.company_id, ctx.user_id, employee_id)
+
+
+def save_pay_item(db: Db, ctx: RequestContext, employee_id: int, row_id: int | None, f: dict[str, Any],
+                  row_version: bytes | None) -> dict[str, Any]:
+    _not_my_pay(ctx, employee_id)
+    return employees_repo.save_pay_item(db, ctx.company_id, ctx.user_id, employee_id, row_id, f, row_version)
+
+
+def delete_pay_item(db: Db, ctx: RequestContext, employee_id: int, row_id: int, row_version: bytes) -> None:
+    _not_my_pay(ctx, employee_id)
+    employees_repo.delete_pay_item(db, ctx.company_id, ctx.user_id, employee_id, row_id, row_version)
+
+
 def list_bank_accounts(db: Db, ctx: RequestContext, employee_id: int) -> list[dict[str, Any]]:
     return employees_repo.list_bank_accounts(db, ctx.company_id, ctx.user_id, employee_id)
 

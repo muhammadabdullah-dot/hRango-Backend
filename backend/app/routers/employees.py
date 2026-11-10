@@ -15,7 +15,7 @@ from app.schemas.employees import (BankAccountIn, BankAccountOut, ChangeOut, Con
                                    DependentIn, DependentOut, DocumentIn, DocumentOut, EducationIn, EducationOut,
                                    EmergencyContactIn, EmergencyContactOut, EmployeeIn, EmployeeLookupOut,
                                    EmployeeOut, EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut,
-                                   ExperienceIn, ExperienceOut,
+                                   EmployeePayItemIn, EmployeePayItemOut, EmployeePhotoOut, ExperienceIn, ExperienceOut,
                                    HistoryOut, IdentityIn, PhotoIn, RowVersionIn, SalaryIn, SalaryOut, SkillIn,
                                    SkillOut, UpdateRequestIn, UpdateRequestOut)
 
@@ -58,6 +58,12 @@ def employee_summary(filters: dict = Depends(employee_filters), db: Db = Depends
     """The directory's tiles: total, by gender and by status, over the people the list shows with the
     same filters (and the same scope of employees.directory.view)."""
     return c.employee_summary(db, ctx, filters)
+
+
+@router.get("/photos", response_model=Item[list[EmployeePhotoOut]])
+def photos(db: Db = Depends(get_db), ctx: RequestContext = Depends(get_context)) -> dict:
+    """Everyone in the company with a photo, so any list of people can show faces. Links expire."""
+    return c.photos(db, ctx)
 
 
 @router.get("/lookup", response_model=Paginated[EmployeeLookupOut])
@@ -182,6 +188,34 @@ def list_changes(employee_id: int, paging: PageParams = Depends(page_params), db
                  ctx: RequestContext = Depends(require("employees.history.view"))) -> dict:
     """Field-level changes to the record (the History popup)."""
     return c.list_changes(db, ctx, employee_id, paging)
+
+
+# ---------------------------------------------------------------- fixed pay items (sensitive)
+
+@router.get("/{employee_id}/pay-items", response_model=Item[list[EmployeePayItemOut]])
+def list_pay_items(employee_id: int, db: Db = Depends(get_db),
+                   ctx: RequestContext = Depends(require("employees.salary.view"))) -> dict:
+    return c.list_pay_items(db, ctx, employee_id)
+
+
+@router.post("/{employee_id}/pay-items", response_model=Item[EmployeePayItemOut], status_code=status.HTTP_201_CREATED)
+def add_pay_item(employee_id: int, body: EmployeePayItemIn, db: Db = Depends(get_db),
+                 ctx: RequestContext = Depends(require("employees.salary.edit"))) -> dict:
+    return c.save_pay_item(db, ctx, employee_id, None, body)
+
+
+@router.put("/{employee_id}/pay-items/{row_id}", response_model=Item[EmployeePayItemOut])
+def update_pay_item(employee_id: int, row_id: int, body: EmployeePayItemIn, db: Db = Depends(get_db),
+                    ctx: RequestContext = Depends(require("employees.salary.edit"))) -> dict:
+    return c.save_pay_item(db, ctx, employee_id, row_id, body)
+
+
+@router.delete("/{employee_id}/pay-items/{row_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_pay_item(employee_id: int, row_id: int, row_version: str | None = Query(None, alias="rowVersion"),
+                    db: Db = Depends(get_db),
+                    ctx: RequestContext = Depends(require("employees.salary.edit"))) -> Response:
+    c.delete_pay_item(db, ctx, employee_id, row_id, row_version)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------- salary (sensitive)

@@ -64,6 +64,13 @@ def enable_user(user_id: int, body: RowVersionIn, db: Db = Depends(get_db),
     return c.set_user_active(db, ctx, user_id, True, body.row_version)
 
 
+@router.patch("/users/{user_id}/account-owner", response_model=Item[UserDetailOut])
+def transfer_owner(user_id: int, body: RowVersionIn, db: Db = Depends(get_db),
+                   ctx: RequestContext = Depends(require("access.users.edit"))) -> dict:
+    """The Account Owner hands the role to another Company Administrator."""
+    return c.transfer_owner(db, ctx, user_id, body.row_version)
+
+
 @router.put("/users/{user_id}/password", status_code=NO_CONTENT)
 def set_user_password(user_id: int, body: PasswordIn, db: Db = Depends(get_db),
                       ctx: RequestContext = Depends(require("access.users.edit"))) -> Response:
