@@ -60,6 +60,7 @@ def get_employee(db: Db, ctx: RequestContext, employee_id: int) -> dict[str, Any
 
 
 def create_employee(db: Db, ctx: RequestContext, fields: dict[str, Any]) -> dict[str, Any]:
+    joining_salary = fields.pop("joining_salary", None)
     if fields.get("joining_date") is None:
         raise invalid("Joining date is required.", "joiningDate")
     if fields.get("status") not in ("active", "probation"):
@@ -67,9 +68,30 @@ def create_employee(db: Db, ctx: RequestContext, fields: dict[str, Any]) -> dict
     cnic = normalise_cnic(fields.get("cnic"))
     if cnic is not None and not _holds(db, ctx, "employees.identity.edit"):
         raise forbidden("You may not record CNICs.")
+    if joining_salary is not None and not _holds(db, ctx, "employees.salary.edit"):
+        raise _salary_refused()
     _check_dates(fields)
-    return employees_repo.save_employee(db, ctx.company_id, ctx.user_id, "employees.directory.create", None, fields,
-                                        cnic is not None, cnic, None)
+    if joining_salary is None:
+        return employees_repo.save_employee(db, ctx.company_id, ctx.user_id, "employees.directory.create", None,
+                                            fields, cnic is not None, cnic, None)
+    # The person and their first salary are saved together, or neither is.
+    with db.transaction():
+        row = employees_repo.save_employee(db, ctx.company_id, ctx.user_id, "employees.directory.create", None,
+                                           fields, cnic is not None, cnic, None)
+        try:
+            employees_repo.save_salary(db, ctx.company_id, ctx.user_id, int(row["id"]), None,
+                                       fields["joining_date"], joining_salary, None, None, "joining", None, None)
+        except AppError as error:
+            # Salary rights that do not reach this person (a team scope, say): the procedure cannot see them.
+            if error.status == 404:
+                raise _salary_refused() from error
+            raise
+    return row
+
+
+def _salary_refused() -> AppError:
+    message = "You may not set this employee's salary. Leave Joining Salary empty and ask payroll to add it."
+    return AppError(403, "FORBIDDEN", message, {"joiningSalary": message})
 
 
 def update_employee(db: Db, ctx: RequestContext, employee_id: int, fields: dict[str, Any],

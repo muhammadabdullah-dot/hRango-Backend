@@ -13,7 +13,8 @@ from app.core.rowversion import row_version_in, row_version_out
 from app.middlewares.auth import RequestContext
 from app.schemas.common import paginated
 from app.schemas.employees import (BankAccountIn, BankAccountOut, ChangeOut, ContractOut, DependentOut, DocumentOut,
-                                   EducationOut, EmergencyContactOut, EmployeeIn, EmployeeLookupOut, EmployeeOut,
+                                   EducationOut, EmergencyContactOut, EmployeeCreateIn, EmployeeIn,
+                                   EmployeeLookupOut, EmployeeOut,
                                    EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut, ExperienceOut,
                                    EmployeePayItemIn, EmployeePayItemOut, EmployeePhotoOut, HistoryOut, IdentityIn,
                                    PhotoIn, SalaryIn, SalaryOut, SkillOut, UpdateRequestIn, UpdateRequestOut)
@@ -62,7 +63,7 @@ def get_employee(db: Db, ctx: RequestContext, employee_id: int) -> dict:
     return {"data": _employee(s.get_employee(db, ctx, employee_id), ctx.company_id)}
 
 
-def create_employee(db: Db, ctx: RequestContext, body: EmployeeIn) -> dict:
+def create_employee(db: Db, ctx: RequestContext, body: EmployeeCreateIn) -> dict:
     row = s.create_employee(db, ctx, body.model_dump(by_alias=False, exclude={"row_version"}))
     return {"data": _employee(row, ctx.company_id)}
 

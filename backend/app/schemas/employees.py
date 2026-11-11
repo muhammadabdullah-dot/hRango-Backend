@@ -56,6 +56,12 @@ class EmployeeIn(ApiModel):
     row_version: str | None = None
 
 
+class EmployeeCreateIn(EmployeeIn):
+    """A new employee. `joining_salary` is their first salary (source 'joining', from the joining date);
+    it needs `employees.salary.edit`. Later salaries: Salary Revision or /employees/{id}/salary."""
+    joining_salary: Decimal | None = Field(None, ge=0, max_digits=18, decimal_places=2)
+
+
 class GenderCountsOut(ApiModel):
     male: int
     female: int

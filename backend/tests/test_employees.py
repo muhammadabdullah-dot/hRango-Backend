@@ -175,6 +175,51 @@ def test_employment_periods(client, db, company, admin):
     assert backwards.status_code == 422
 
 
+def test_joining_salary_on_create(client, db, company, admin):
+    h = admin["headers"]
+    branch = factories.branch(db, company)
+    e = _new(client, h, branch, joiningSalary="185000")
+    rows = client.get(f"/api/employees/{e['id']}/salary", headers=h).json()["data"]
+    assert [(r["effectiveDate"], r["amount"], r["source"], r["previousAmount"]) for r in rows] == [
+        ("2025-07-01", "185000.00", "joining", None)]
+    # Salary Revision starts from it.
+    current = client.get(f"/api/payroll/salary-revisions/current/{e['id']}", headers=h,
+                         params={"date": "2025-08-01"}).json()["data"]
+    assert current["salary"] == 185000
+    assert not client.get(f"/api/employees/{_new(client, h, branch)['id']}/salary", headers=h).json()["data"]
+
+    negative = client.post("/api/employees", headers=h, json={"firstName": "A", "lastName": "B", "branchId": branch,
+                                                              "joiningDate": "2025-01-01", "joiningSalary": "-1"})
+    assert negative.status_code == 422
+
+    def added(last: str) -> bool:
+        return bool(client.get("/api/employees", headers=h, params={"q": last, "includeInactive": "true"})
+                    .json()["data"])
+
+    # No salary rights: refused before anything is saved.
+    clerk = factories.login_as(db, client, company)
+    for code in ("employees.directory.view", "employees.directory.create"):
+        fo.override(db, clerk["user_id"], code)
+    last = f"Pay {factories.tag()}"
+    refused = client.post("/api/employees", headers=clerk["headers"],
+                          json={"firstName": "A", "lastName": last, "branchId": branch, "joiningDate": "2025-01-01",
+                                "joiningSalary": "90000"})
+    assert refused.status_code == 403 and "joiningSalary" in refused.json()["fieldErrors"]
+    assert not added(last)
+
+    # Salary rights that do not reach the new person (team): refused, and the person is not left half-added.
+    lead = factories.login_as(db, client, company, employee_id=factories.employee(db, company))
+    for code in ("employees.directory.view", "employees.directory.create"):
+        fo.override(db, lead["user_id"], code)
+    fo.override(db, lead["user_id"], "employees.salary.edit", scope="team")
+    last = f"Pay {factories.tag()}"
+    outside = client.post("/api/employees", headers=lead["headers"],
+                          json={"firstName": "A", "lastName": last, "branchId": branch, "joiningDate": "2025-01-01",
+                                "joiningSalary": "90000"})
+    assert outside.status_code == 403 and "joiningSalary" in outside.json()["fieldErrors"]
+    assert not added(last)
+
+
 def test_salary_and_bank_details(client, db, company, admin):
     h = admin["headers"]
     emp = factories.employee(db, company)

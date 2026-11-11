@@ -13,7 +13,8 @@ from app.middlewares.auth import RequestContext, get_context, require
 from app.schemas.common import Item, Paginated
 from app.schemas.employees import (BankAccountIn, BankAccountOut, ChangeOut, ContractIn, ContractOut, DecisionIn,
                                    DependentIn, DependentOut, DocumentIn, DocumentOut, EducationIn, EducationOut,
-                                   EmergencyContactIn, EmergencyContactOut, EmployeeIn, EmployeeLookupOut,
+                                   EmergencyContactIn, EmergencyContactOut, EmployeeCreateIn, EmployeeIn,
+                                   EmployeeLookupOut,
                                    EmployeeOut, EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut,
                                    EmployeePayItemIn, EmployeePayItemOut, EmployeePhotoOut, ExperienceIn, ExperienceOut,
                                    HistoryOut, IdentityIn, PhotoIn, RowVersionIn, SalaryIn, SalaryOut, SkillIn,
@@ -125,7 +126,7 @@ def get_employee(employee_id: int, db: Db = Depends(get_db),
 
 
 @router.post("", response_model=Item[EmployeeOut], status_code=status.HTTP_201_CREATED)
-def create_employee(body: EmployeeIn, db: Db = Depends(get_db),
+def create_employee(body: EmployeeCreateIn, db: Db = Depends(get_db),
                     ctx: RequestContext = Depends(require("employees.directory.create"))) -> dict:
     return c.create_employee(db, ctx, body)
 
