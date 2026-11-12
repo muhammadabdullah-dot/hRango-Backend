@@ -125,6 +125,7 @@ def test_policies_and_enrolment(client, db, org):
     assert no_types.status_code == 422 and "types" in no_types.json()["fieldErrors"]
 
     e1, e2 = factories.employee(db, company), factories.employee(db, company)
+    covered = client.get(f"/api/leaves/policies/{p['id']}", headers=h).json()["data"]["enrolledCount"]
     emp_level = client.post("/api/leaves/policies", headers=h, json={
         "title": "Managers", "policyKind": "distribution", "policyLevel": "employee",
         "types": [{"leaveTypeId": a["id"], "allowance": 20}]}).json()["data"]
@@ -134,6 +135,9 @@ def test_policies_and_enrolment(client, db, org):
     assert enrolled.json()["data"]["enrolledCount"] == 2
     listed = client.get(f"/api/leaves/policies/{emp_level['id']}/employees", headers=h).json()
     assert {x["employeeId"] for x in listed["data"]} == {str(e1), str(e2)}
+    # The company policy no longer counts them: the employee-level one covers them now.
+    after = client.get(f"/api/leaves/policies/{p['id']}", headers=h).json()["data"]["enrolledCount"]
+    assert after == covered - 2
 
     # The employee-level policy outranks the company one: e1 gets 20 days of a and none of b.
     cover = fl.rows(db, "SELECT leave_type_id, allowance FROM lv.fn_leave_coverage(?) WHERE employee_id = ?",

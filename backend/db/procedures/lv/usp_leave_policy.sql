@@ -42,8 +42,16 @@ AS RETURN
 SELECT p.id, p.title, p.policy_kind, p.policy_level, p.allow_half_day, p.allow_short_leave, p.is_active,
        (SELECT SUM(COALESCE(pt.allowance, t.allowance)) FROM [lv].[leave_policy_type] pt
         JOIN [lv].[leave_type] t ON t.id = pt.leave_type_id WHERE pt.leave_policy_id = p.id) AS total_leaves,
+       -- A company-level policy covers everyone not enrolled in an active employee-level policy of
+       -- its kind (lv.fn_leave_coverage), so those people are not counted twice.
        CASE WHEN p.policy_level = N'company'
-            THEN (SELECT COUNT(*) FROM [hr].[employee] e WHERE e.company_id = @company_id AND e.status <> N'left')
+            THEN (SELECT COUNT(*) FROM [hr].[employee] e
+                  WHERE e.company_id = @company_id AND e.status <> N'left'
+                    AND NOT EXISTS (SELECT 1 FROM [lv].[leave_policy_employee] ope
+                                    JOIN [lv].[leave_policy] op ON op.id = ope.leave_policy_id
+                                    WHERE ope.employee_id = e.id AND op.company_id = @company_id
+                                      AND op.policy_level = N'employee' AND op.policy_kind = p.policy_kind
+                                      AND op.is_active = 1))
             ELSE (SELECT COUNT(*) FROM [lv].[leave_policy_employee] pe WHERE pe.leave_policy_id = p.id) END AS enrolled_count,
        (SELECT pt.leave_type_id, t.title AS leave_type_title, t.short_code, pt.allowance,
                COALESCE(pt.allowance, t.allowance) AS effective_allowance
