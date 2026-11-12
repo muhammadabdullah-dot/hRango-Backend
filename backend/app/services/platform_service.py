@@ -1,12 +1,16 @@
 """Platform staff rules that do not need the data; the rest are in db/procedures/plat."""
+import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.core.db import Db
+from app.core.default_roles import expanded as default_roles
 from app.core.errors import AppError, invalid
 from app.core.security import create_staff_token, hash_password, staff_token_expiry, verify_password
 from app.repos import platform_repo
 
 _BAD_LOGIN = AppError(401, "BAD_CREDENTIALS", "The email or password is not correct.")
+TRIAL = timedelta(days=14)
 
 
 def _check_password(password: str) -> None:
@@ -43,3 +47,23 @@ def update_staff(db: Db, actor_id: int, staff_id: int, fields: dict[str, Any], r
 def set_password(db: Db, actor_id: int, staff_id: int, password: str) -> None:
     _check_password(password)
     platform_repo.set_password(db, actor_id, staff_id, hash_password(password))
+
+
+def register_customer(db: Db, actor_id: int, f: dict[str, Any]) -> dict[str, Any]:
+    """A working organisation in one step: its company, default roles, Account Owner and customer record."""
+    owner_email = f["owner_email"].strip().lower()
+    with db.transaction():
+        platform_repo.register_check(db, f["name"], owner_email)
+        company_id = db.call_one("org.usp_company_provision", name=f["name"].strip())["company_id"]
+        db.call("auth.usp_role_defaults_apply", company_id=company_id,
+                roles=json.dumps(default_roles(), ensure_ascii=False))
+        db.call("auth.usp_user_provision", company_id=company_id, email=owner_email,
+                password_hash=hash_password(f["owner_password"]), display_name=f["owner_name"].strip(),
+                is_account_owner=True, role_codes="company_admin")
+        customer = platform_repo.add_customer(db, actor_id, company_id, f, f["lead_id"])
+        if f["plan_id"] is not None:
+            today = datetime.now(UTC).date()
+            platform_repo.save_subscription(db, actor_id, None, {
+                "customer_id": customer["id"], "plan_id": f["plan_id"], "billing_cycle": "monthly", "status": "trial",
+                "amount": None, "start_date": today, "renews_on": today + TRIAL}, None)
+    return platform_repo.get_customer(db, customer["id"])

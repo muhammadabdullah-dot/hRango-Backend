@@ -6,9 +6,12 @@ CREATE OR ALTER PROCEDURE [auth].[usp_login_get]
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT id, password_hash, is_active, company_id
-    FROM [auth].[user_account]
-    WHERE email = LTRIM(RTRIM(@email));
+    SELECT u.id, u.password_hash, u.is_active, u.company_id,
+           CASE WHEN EXISTS (SELECT 1 FROM [plat].[customer_company] cc
+                             JOIN [plat].[customer] c ON c.id = cc.customer_id AND c.status <> N'active'
+                             WHERE cc.company_id = u.company_id) THEN 1 ELSE 0 END AS is_blocked
+    FROM [auth].[user_account] u
+    WHERE u.email = LTRIM(RTRIM(@email));
 END
 GO
 
@@ -55,7 +58,11 @@ BEGIN
     FROM [auth].[user_session] s
     JOIN [auth].[user_account] u ON u.id = s.user_account_id AND u.is_active = 1
     WHERE s.id = @session_id AND s.user_account_id = @user_id
-      AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > @now);
+      AND s.revoked_at IS NULL AND (s.expires_at IS NULL OR s.expires_at > @now)
+      -- A suspended or cancelled organisation stops at once, not at the next sign-in.
+      AND NOT EXISTS (SELECT 1 FROM [plat].[customer_company] cc
+                      JOIN [plat].[customer] c ON c.id = cc.customer_id AND c.status <> N'active'
+                      WHERE cc.company_id = s.company_id);
 
     IF @session_company IS NULL
         RETURN;

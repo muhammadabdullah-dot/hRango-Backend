@@ -192,7 +192,7 @@ departments, employees and signed-in users with given roles; module tests make t
 
 ## Running
 
-`run.bat`, or `.venv\Scripts\python.exe -m app.main` (port from `.env`). Docs at `/docs`.
+`run.bat`, or `.venv\Scripts\python.exe -m app.main` (`HOST` and `PORT` from `.env`; `HOST=0.0.0.0` opens it to the LAN). Docs at `/docs`.
 
 ## Parallel work (several people or agents at once)
 

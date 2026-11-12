@@ -184,6 +184,8 @@ def bootstrap_company(cur: pyodbc.Cursor, company: str, admin_email: str) -> Non
     cur.execute("EXEC auth.usp_user_provision @company_id = ?, @email = ?, @password_hash = ?, @display_name = ?, "
                 "@is_account_owner = 1, @role_codes = ?", company_id, admin_email, hash_password(password),
                 "Administrator", "company_admin").fetchall()
+    cur.execute("EXEC plat.usp_customer_add @company_id = ?, @name = ?, @contact_email = ?",
+                company_id, company, admin_email).fetchall()
     print(f"bootstrap: company {company!r} (id {company_id}), administrator {admin_email}")
 
 

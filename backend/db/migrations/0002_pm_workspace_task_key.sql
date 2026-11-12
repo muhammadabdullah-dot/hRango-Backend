@@ -98,8 +98,11 @@ INSERT [pm].[workspace_task_sequence] (workspace_id, next_number)
 SELECT w.id, 1 + CASE WHEN ISNULL(u.top_number, 0) > c.task_count THEN u.top_number ELSE c.task_count END
 FROM [pm].[workspace] w
 CROSS APPLY (SELECT COUNT(*) AS task_count FROM [pm].[task] t WHERE t.workspace_id = w.id) c
-OUTER APPLY (SELECT MAX(TRY_CONVERT(INT, SUBSTRING(t.code, LEN(w.task_key) + 2, 20))) AS top_number
-             FROM [pm].[task] t WHERE t.company_id = w.company_id AND t.code LIKE w.task_key + N'-%') u
+-- The number is worked out in its own APPLY: SQL Server refuses an aggregate that mixes the outer key and t.code.
+OUTER APPLY (SELECT MAX(n.number) AS top_number
+             FROM [pm].[task] t
+             CROSS APPLY (SELECT TRY_CONVERT(INT, SUBSTRING(t.code, LEN(w.task_key) + 2, 20)) AS number) n
+             WHERE t.company_id = w.company_id AND t.code LIKE w.task_key + N'-%') u
 WHERE NOT EXISTS (SELECT 1 FROM [pm].[workspace_task_sequence] s WHERE s.workspace_id = w.id);
 GO
 

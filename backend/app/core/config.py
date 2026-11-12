@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     app_name: str = "HRango API"
+    # 127.0.0.1: this PC only. 0.0.0.0: every network card, so other PCs on the LAN can reach it.
+    host: str = "127.0.0.1"
     port: int = 8000
     # SQL Server ODBC connection string, e.g.
     # Driver={ODBC Driver 18 for SQL Server};Server=localhost;Database=hrango_dev;Trusted_Connection=yes;TrustServerCertificate=yes

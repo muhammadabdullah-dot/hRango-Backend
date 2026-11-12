@@ -35,14 +35,14 @@ Each module gets one file per layer: `app/routers/<module>.py`, `app/controllers
 | 12 | Manpower planning | `mp` | `manpower` | 7 |
 | 13 | Shared | `core` | `core` | 10 |
 | 14 | Engagement | `eng` | `engagement` | 16 |
-| 15 | Project and task management | `pm` | `projects` | 40 |
+| 15 | Project and task management | `pm` | `projects` | 42 |
 | 16 | Warnings | `att` | `attendance` | 4 |
 | 17 | Benefits | `ben` | `benefits` | 10 |
 | 18 | Performance | `perf` | `performance` | 11 |
 | 19 | Training | `trn` | `training` | 6 |
 | 20 | Custom Form | `frm` | `forms` | 8 |
-| 21 | Platform staff | `plat` | `platform` | 3 |
-| | **Total** | | | **273** |
+| 21 | Platform staff | `plat` | `platform` | 10 |
+| | **Total** | | | **282** |
 
 ---
 
@@ -2763,8 +2763,9 @@ pm.workspace
   id                     BIGINT IDENTITY   NN  PK
   company_id             BIGINT            NN      FK → org.company
   name                   NVARCHAR(200)     NN    -- 3 to 50 characters, unique in the company
+  task_key               NVARCHAR(5)       NN    -- 2 to 5 capitals made from the name, unique in the company, editable; task codes are <task_key>-<n>
   description            NVARCHAR(MAX)    -- up to 300 characters
-  privacy                NVARCHAR(30)      NN    -- private (members only), workspace (everyone in the company), public (everyone in the company reads, members edit)
+  privacy                NVARCHAR(30)      NN    -- private (members only), workspace (everyone in the company works in it as a contributor), public (everyone in the company reads, members edit)
   department_id          BIGINT            NN      FK → org.department    -- Define Workflow: Select Your Department
   workflow_template_id   BIGINT            NN      FK → pm.template    -- work_starter, project_management, marketing_team, product_engineering
   status_mode            NVARCHAR(30)      NN    -- default, custom
@@ -2772,6 +2773,13 @@ pm.workspace
   owner_id               BIGINT            NN      FK → hr.employee    -- Workspace Owner; always a member with workspace_admin
   cover_file_id          BIGINT                    FK → core.stored_file
   UNIQUE (company_id, name)
+  UNIQUE (company_id, task_key)
+```
+
+```
+pm.workspace_task_sequence    -- the number the next task of a workspace gets; apart from workspace so adding a task does not change the workspace's row version
+  workspace_id   BIGINT            NN  PK  FK → pm.workspace
+  next_number    INT               NN
 ```
 
 ```
@@ -2849,7 +2857,7 @@ pm.task
   workspace_id            BIGINT            NN      FK → pm.workspace
   task_list_id            BIGINT                    FK → pm.task_list    -- blank: at the workspace's top level
   parent_task_id          BIGINT                    FK → pm.task    -- subtask
-  code                    NVARCHAR(30)      NN    -- HR000000001, per company
+  code                    NVARCHAR(30)      NN    -- <workspace task_key>-<n> (ONB-12), unique in the company; tasks made before keys keep HR000000001
   name                    NVARCHAR(200)     NN
   description             NVARCHAR(MAX)
   task_type               NVARCHAR(30)      NN    -- task, milestone
@@ -2980,6 +2988,16 @@ pm.task_extension    -- Request Extension: up to the workspace's max_extensions 
   decided_at        DATETIME2(0)
   remarks           NVARCHAR(MAX)
   request_id        BIGINT                    FK → req.request
+```
+
+```
+pm.task_due_notice    -- what pm.usp_task_due_notify (daily) has told an assignee, so a second run sends nothing
+  id            BIGINT IDENTITY   NN  PK
+  task_id       BIGINT            NN      FK → pm.task
+  employee_id   BIGINT            NN      FK → hr.employee
+  notice_kind   NVARCHAR(30)      NN    -- due_tomorrow, overdue
+  due_date      DATE              NN    -- the due date it was about; a moved due date is announced again
+  UNIQUE (task_id, employee_id, notice_kind, due_date)
 ```
 
 ```
@@ -3195,6 +3213,8 @@ task_comment 1──* comment_mention / comment_reaction
 custom_field 1──* task_field_value
 share_link 1──* share_member
 workspace 1──1 workspace_overdue_setting
+workspace 1──1 workspace_task_sequence
+task 1──* task_due_notice
 task 1──* task_external_file
 workspace 1──* doc 1──* doc_comment
 doc *──* task (doc_task)
@@ -3785,12 +3805,12 @@ form_field_option 1──* form_answer_option
 ## 21. Platform staff  (`plat`)
 
 ```
-plat.staff_account    -- hRango's own people: Super Admin, Admin, Support, Billing
+plat.staff_account    -- hRango's own people: Super Admin, Admin, Support, Billing, Sales
   id              BIGINT IDENTITY   NN  PK
   email           NVARCHAR(254)     NN
   display_name    NVARCHAR(200)     NN
   password_hash   NVARCHAR(255)     NN
-  role            NVARCHAR(30)      NN    -- super_admin, admin, support, billing
+  role            NVARCHAR(30)      NN    -- super_admin, admin, support, billing, sales
   is_active       BIT               NN
   last_login_at   DATETIME2(0)
   UNIQUE (email)
@@ -3816,6 +3836,96 @@ plat.staff_audit    -- everything platform staff do; kept when the account goes
   entity_ref         NVARCHAR(100)
   detail             NVARCHAR(1000)
   ip_address         NVARCHAR(45)
+```
+
+```
+plat.customer    -- an organisation that uses hRango (shown as Organisations); owns one or more companies
+  id              BIGINT IDENTITY   NN  PK
+  name            NVARCHAR(200)     NN
+  contact_name    NVARCHAR(200)
+  contact_email   NVARCHAR(254)     NN
+  contact_phone   NVARCHAR(50)
+  country         NVARCHAR(100)
+  status          NVARCHAR(20)      NN    -- active, suspended, cancelled; anything but active stops its people signing in
+  notes           NVARCHAR(1000)
+  UNIQUE (name)
+```
+
+```
+plat.customer_company    -- which customer owns which company
+  id            BIGINT IDENTITY   NN  PK
+  customer_id   BIGINT            NN      FK → plat.customer
+  company_id    BIGINT            NN      FK → org.company
+  UNIQUE (company_id)
+```
+
+```
+plat.plan    -- what a customer can buy (documents: Basic, Advanced, Premium; open question B6)
+  id               BIGINT IDENTITY   NN  PK
+  name             NVARCHAR(200)     NN
+  description      NVARCHAR(500)
+  price_monthly    DECIMAL(18,2)     NN
+  price_annual     DECIMAL(18,2)     NN
+  employee_limit   INT    -- NULL: no limit
+  is_active        BIT               NN
+  UNIQUE (name)
+```
+
+```
+plat.subscription    -- a customer on a plan; at most one that is not cancelled. Amounts in PKR
+  id              BIGINT IDENTITY   NN  PK
+  customer_id     BIGINT            NN      FK → plat.customer
+  plan_id         BIGINT                    FK → plat.plan
+  billing_cycle   NVARCHAR(10)      NN    -- monthly, annual
+  status          NVARCHAR(20)      NN    -- trial, active, past_due, cancelled
+  amount          DECIMAL(18,2)     NN    -- per billing cycle
+  start_date      DATE              NN
+  renews_on       DATE
+  cancelled_on    DATE
+```
+
+```
+plat.invoice    -- what a customer is billed; overdue is worked out from due_date
+  id                  BIGINT IDENTITY   NN  PK
+  number              NVARCHAR(30)      NN
+  customer_id         BIGINT            NN      FK → plat.customer
+  subscription_id     BIGINT                    FK → plat.subscription
+  issue_date          DATE              NN
+  due_date            DATE              NN
+  amount              DECIMAL(18,2)     NN
+  status              NVARCHAR(20)      NN    -- issued, paid, void
+  paid_on             DATE
+  payment_reference   NVARCHAR(100)
+  UNIQUE (number)
+```
+
+```
+plat.lead    -- a prospect in the sales pipeline
+  id                 BIGINT IDENTITY   NN  PK
+  company_name       NVARCHAR(200)     NN
+  contact_name       NVARCHAR(200)
+  contact_email      NVARCHAR(254)
+  contact_phone      NVARCHAR(50)
+  source             NVARCHAR(50)    -- website, referral, event, outbound, other
+  stage              NVARCHAR(20)      NN    -- new, contacted, demo, proposal, won, lost
+  employee_count     INT
+  expected_monthly   DECIMAL(18,2)
+  next_follow_up     DATE
+  notes              NVARCHAR(1000)
+  owner_staff_id     BIGINT                    FK → plat.staff_account
+  customer_id        BIGINT                    FK → plat.customer    -- set when the lead becomes an organisation
+```
+
+```
+plat.ticket    -- a support case from a customer; holds no HR data
+  id                  BIGINT IDENTITY   NN  PK
+  customer_id         BIGINT            NN      FK → plat.customer
+  subject             NVARCHAR(200)     NN
+  detail              NVARCHAR(2000)
+  priority            NVARCHAR(10)      NN    -- low, normal, high, urgent
+  status              NVARCHAR(20)      NN    -- open, in_progress, resolved, closed
+  assignee_staff_id   BIGINT                    FK → plat.staff_account
+  resolved_at         DATETIME2(0)
 ```
 
 ---

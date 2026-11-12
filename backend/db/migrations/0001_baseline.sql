@@ -3519,6 +3519,7 @@ CREATE TABLE [pm].[workspace] (
     [id] BIGINT IDENTITY(1,1) NOT NULL,
     [company_id] BIGINT NOT NULL,
     [name] NVARCHAR(200) NOT NULL,
+    [task_key] NVARCHAR(5) NOT NULL,
     [description] NVARCHAR(MAX) NULL,
     [privacy] NVARCHAR(30) NOT NULL,
     [department_id] BIGINT NOT NULL,
@@ -3533,7 +3534,19 @@ CREATE TABLE [pm].[workspace] (
     [updated_by] BIGINT NULL,
     [row_version] ROWVERSION,
     CONSTRAINT [PK_workspace] PRIMARY KEY CLUSTERED ([id]),
-    CONSTRAINT [UQ_workspace_company_id_name] UNIQUE ([company_id], [name])
+    CONSTRAINT [UQ_workspace_company_id_name] UNIQUE ([company_id], [name]),
+    CONSTRAINT [UQ_workspace_company_id_task_key] UNIQUE ([company_id], [task_key])
+);
+GO
+CREATE TABLE [pm].[workspace_task_sequence] (
+    [workspace_id] BIGINT NOT NULL,
+    [next_number] INT NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_workspace_task_sequence_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_workspace_task_sequence] PRIMARY KEY CLUSTERED ([workspace_id])
 );
 GO
 CREATE TABLE [pm].[workspace_member] (
@@ -3837,6 +3850,21 @@ CREATE TABLE [pm].[task_extension] (
     [updated_by] BIGINT NULL,
     [row_version] ROWVERSION,
     CONSTRAINT [PK_task_extension] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [pm].[task_due_notice] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [task_id] BIGINT NOT NULL,
+    [employee_id] BIGINT NOT NULL,
+    [notice_kind] NVARCHAR(30) NOT NULL,
+    [due_date] DATE NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_task_due_notice_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_task_due_notice] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_task_due_notice_task_id_employee_id_notice_kind_due_date] UNIQUE ([task_id], [employee_id], [notice_kind], [due_date])
 );
 GO
 CREATE TABLE [pm].[custom_field] (
@@ -4888,6 +4916,131 @@ CREATE TABLE [plat].[staff_audit] (
     CONSTRAINT [PK_staff_audit] PRIMARY KEY CLUSTERED ([id])
 );
 GO
+CREATE TABLE [plat].[customer] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [name] NVARCHAR(200) NOT NULL,
+    [contact_name] NVARCHAR(200) NULL,
+    [contact_email] NVARCHAR(254) NOT NULL,
+    [contact_phone] NVARCHAR(50) NULL,
+    [country] NVARCHAR(100) NULL,
+    [status] NVARCHAR(20) NOT NULL,
+    [notes] NVARCHAR(1000) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_customer_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_customer] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_customer_name] UNIQUE ([name])
+);
+GO
+CREATE TABLE [plat].[customer_company] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [customer_id] BIGINT NOT NULL,
+    [company_id] BIGINT NOT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_customer_company_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_customer_company] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_customer_company_company_id] UNIQUE ([company_id])
+);
+GO
+CREATE TABLE [plat].[plan] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [name] NVARCHAR(200) NOT NULL,
+    [description] NVARCHAR(500) NULL,
+    [price_monthly] DECIMAL(18,2) NOT NULL,
+    [price_annual] DECIMAL(18,2) NOT NULL,
+    [employee_limit] INT NULL,
+    [is_active] BIT NOT NULL CONSTRAINT [DF_plan_is_active] DEFAULT 0,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_plan_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_plan] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_plan_name] UNIQUE ([name])
+);
+GO
+CREATE TABLE [plat].[subscription] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [customer_id] BIGINT NOT NULL,
+    [plan_id] BIGINT NULL,
+    [billing_cycle] NVARCHAR(10) NOT NULL,
+    [status] NVARCHAR(20) NOT NULL,
+    [amount] DECIMAL(18,2) NOT NULL,
+    [start_date] DATE NOT NULL,
+    [renews_on] DATE NULL,
+    [cancelled_on] DATE NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_subscription_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_subscription] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [plat].[invoice] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [number] NVARCHAR(30) NOT NULL,
+    [customer_id] BIGINT NOT NULL,
+    [subscription_id] BIGINT NULL,
+    [issue_date] DATE NOT NULL,
+    [due_date] DATE NOT NULL,
+    [amount] DECIMAL(18,2) NOT NULL,
+    [status] NVARCHAR(20) NOT NULL,
+    [paid_on] DATE NULL,
+    [payment_reference] NVARCHAR(100) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_invoice_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_invoice] PRIMARY KEY CLUSTERED ([id]),
+    CONSTRAINT [UQ_invoice_number] UNIQUE ([number])
+);
+GO
+CREATE TABLE [plat].[lead] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [company_name] NVARCHAR(200) NOT NULL,
+    [contact_name] NVARCHAR(200) NULL,
+    [contact_email] NVARCHAR(254) NULL,
+    [contact_phone] NVARCHAR(50) NULL,
+    [source] NVARCHAR(50) NULL,
+    [stage] NVARCHAR(20) NOT NULL,
+    [employee_count] INT NULL,
+    [expected_monthly] DECIMAL(18,2) NULL,
+    [next_follow_up] DATE NULL,
+    [notes] NVARCHAR(1000) NULL,
+    [owner_staff_id] BIGINT NULL,
+    [customer_id] BIGINT NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_lead_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_lead] PRIMARY KEY CLUSTERED ([id])
+);
+GO
+CREATE TABLE [plat].[ticket] (
+    [id] BIGINT IDENTITY(1,1) NOT NULL,
+    [customer_id] BIGINT NOT NULL,
+    [subject] NVARCHAR(200) NOT NULL,
+    [detail] NVARCHAR(2000) NULL,
+    [priority] NVARCHAR(10) NOT NULL,
+    [status] NVARCHAR(20) NOT NULL,
+    [assignee_staff_id] BIGINT NULL,
+    [resolved_at] DATETIME2(0) NULL,
+    [created_at] DATETIME2(0) NOT NULL CONSTRAINT [DF_ticket_created_at] DEFAULT SYSUTCDATETIME(),
+    [created_by] BIGINT NULL,
+    [updated_at] DATETIME2(0) NULL,
+    [updated_by] BIGINT NULL,
+    [row_version] ROWVERSION,
+    CONSTRAINT [PK_ticket] PRIMARY KEY CLUSTERED ([id])
+);
+GO
 
 -- Foreign keys (all ON DELETE NO ACTION)
 ALTER TABLE [org].[company] ADD CONSTRAINT [FK_company_logo_file_id] FOREIGN KEY ([logo_file_id]) REFERENCES [core].[stored_file] ([id]);
@@ -5390,6 +5543,7 @@ ALTER TABLE [pm].[workspace] ADD CONSTRAINT [FK_workspace_workflow_template_id] 
 ALTER TABLE [pm].[workspace] ADD CONSTRAINT [FK_workspace_status_template_id] FOREIGN KEY ([status_template_id]) REFERENCES [pm].[template] ([id]);
 ALTER TABLE [pm].[workspace] ADD CONSTRAINT [FK_workspace_owner_id] FOREIGN KEY ([owner_id]) REFERENCES [hr].[employee] ([id]);
 ALTER TABLE [pm].[workspace] ADD CONSTRAINT [FK_workspace_cover_file_id] FOREIGN KEY ([cover_file_id]) REFERENCES [core].[stored_file] ([id]);
+ALTER TABLE [pm].[workspace_task_sequence] ADD CONSTRAINT [FK_workspace_task_sequence_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
 ALTER TABLE [pm].[workspace_member] ADD CONSTRAINT [FK_workspace_member_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
 ALTER TABLE [pm].[workspace_member] ADD CONSTRAINT [FK_workspace_member_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
 ALTER TABLE [pm].[workspace_status] ADD CONSTRAINT [FK_workspace_status_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
@@ -5435,6 +5589,8 @@ ALTER TABLE [pm].[task_extension] ADD CONSTRAINT [FK_task_extension_task_id] FOR
 ALTER TABLE [pm].[task_extension] ADD CONSTRAINT [FK_task_extension_requested_by_id] FOREIGN KEY ([requested_by_id]) REFERENCES [hr].[employee] ([id]);
 ALTER TABLE [pm].[task_extension] ADD CONSTRAINT [FK_task_extension_decided_by_id] FOREIGN KEY ([decided_by_id]) REFERENCES [hr].[employee] ([id]);
 ALTER TABLE [pm].[task_extension] ADD CONSTRAINT [FK_task_extension_request_id] FOREIGN KEY ([request_id]) REFERENCES [req].[request] ([id]);
+ALTER TABLE [pm].[task_due_notice] ADD CONSTRAINT [FK_task_due_notice_task_id] FOREIGN KEY ([task_id]) REFERENCES [pm].[task] ([id]);
+ALTER TABLE [pm].[task_due_notice] ADD CONSTRAINT [FK_task_due_notice_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
 ALTER TABLE [pm].[custom_field] ADD CONSTRAINT [FK_custom_field_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
 ALTER TABLE [pm].[column_permission] ADD CONSTRAINT [FK_column_permission_workspace_id] FOREIGN KEY ([workspace_id]) REFERENCES [pm].[workspace] ([id]);
 ALTER TABLE [pm].[column_permission] ADD CONSTRAINT [FK_column_permission_employee_id] FOREIGN KEY ([employee_id]) REFERENCES [hr].[employee] ([id]);
@@ -5567,6 +5723,16 @@ ALTER TABLE [frm].[form_answer_option] ADD CONSTRAINT [FK_form_answer_option_for
 ALTER TABLE [frm].[form_answer_option] ADD CONSTRAINT [FK_form_answer_option_form_field_option_id] FOREIGN KEY ([form_field_option_id]) REFERENCES [frm].[form_field_option] ([id]);
 ALTER TABLE [plat].[staff_session] ADD CONSTRAINT [FK_staff_session_staff_account_id] FOREIGN KEY ([staff_account_id]) REFERENCES [plat].[staff_account] ([id]);
 ALTER TABLE [plat].[staff_audit] ADD CONSTRAINT [FK_staff_audit_staff_account_id] FOREIGN KEY ([staff_account_id]) REFERENCES [plat].[staff_account] ([id]);
+ALTER TABLE [plat].[customer_company] ADD CONSTRAINT [FK_customer_company_customer_id] FOREIGN KEY ([customer_id]) REFERENCES [plat].[customer] ([id]);
+ALTER TABLE [plat].[customer_company] ADD CONSTRAINT [FK_customer_company_company_id] FOREIGN KEY ([company_id]) REFERENCES [org].[company] ([id]);
+ALTER TABLE [plat].[subscription] ADD CONSTRAINT [FK_subscription_customer_id] FOREIGN KEY ([customer_id]) REFERENCES [plat].[customer] ([id]);
+ALTER TABLE [plat].[subscription] ADD CONSTRAINT [FK_subscription_plan_id] FOREIGN KEY ([plan_id]) REFERENCES [plat].[plan] ([id]);
+ALTER TABLE [plat].[invoice] ADD CONSTRAINT [FK_invoice_customer_id] FOREIGN KEY ([customer_id]) REFERENCES [plat].[customer] ([id]);
+ALTER TABLE [plat].[invoice] ADD CONSTRAINT [FK_invoice_subscription_id] FOREIGN KEY ([subscription_id]) REFERENCES [plat].[subscription] ([id]);
+ALTER TABLE [plat].[lead] ADD CONSTRAINT [FK_lead_owner_staff_id] FOREIGN KEY ([owner_staff_id]) REFERENCES [plat].[staff_account] ([id]);
+ALTER TABLE [plat].[lead] ADD CONSTRAINT [FK_lead_customer_id] FOREIGN KEY ([customer_id]) REFERENCES [plat].[customer] ([id]);
+ALTER TABLE [plat].[ticket] ADD CONSTRAINT [FK_ticket_customer_id] FOREIGN KEY ([customer_id]) REFERENCES [plat].[customer] ([id]);
+ALTER TABLE [plat].[ticket] ADD CONSTRAINT [FK_ticket_assignee_staff_id] FOREIGN KEY ([assignee_staff_id]) REFERENCES [plat].[staff_account] ([id]);
 GO
 
 -- Indexes
@@ -6004,6 +6170,7 @@ CREATE NONCLUSTERED INDEX [IX_task_extension_task_id] ON [pm].[task_extension] (
 CREATE NONCLUSTERED INDEX [IX_task_extension_requested_by_id] ON [pm].[task_extension] ([requested_by_id]);
 CREATE NONCLUSTERED INDEX [IX_task_extension_decided_by_id] ON [pm].[task_extension] ([decided_by_id]);
 CREATE NONCLUSTERED INDEX [IX_task_extension_request_id] ON [pm].[task_extension] ([request_id]);
+CREATE NONCLUSTERED INDEX [IX_task_due_notice_employee_id] ON [pm].[task_due_notice] ([employee_id]);
 CREATE NONCLUSTERED INDEX [IX_column_permission_workspace_id] ON [pm].[column_permission] ([workspace_id]);
 CREATE NONCLUSTERED INDEX [IX_column_permission_employee_id] ON [pm].[column_permission] ([employee_id]);
 CREATE NONCLUSTERED INDEX [IX_task_field_value_custom_field_id] ON [pm].[task_field_value] ([custom_field_id]);
@@ -6105,6 +6272,19 @@ CREATE NONCLUSTERED INDEX [IX_form_answer_option_form_field_option_id] ON [frm].
 CREATE NONCLUSTERED INDEX [IX_staff_session_staff_account_id] ON [plat].[staff_session] ([staff_account_id]);
 CREATE NONCLUSTERED INDEX [IX_staff_audit_staff_account_id] ON [plat].[staff_audit] ([staff_account_id]);
 CREATE NONCLUSTERED INDEX [IX_staff_audit_staff_account_id_created_at] ON [plat].[staff_audit] ([staff_account_id], [created_at]);
+CREATE NONCLUSTERED INDEX [IX_customer_company_customer_id] ON [plat].[customer_company] ([customer_id]);
+CREATE NONCLUSTERED INDEX [IX_subscription_customer_id] ON [plat].[subscription] ([customer_id]);
+CREATE NONCLUSTERED INDEX [IX_subscription_plan_id] ON [plat].[subscription] ([plan_id]);
+CREATE NONCLUSTERED INDEX [IX_subscription_status] ON [plat].[subscription] ([status]);
+CREATE NONCLUSTERED INDEX [IX_invoice_customer_id] ON [plat].[invoice] ([customer_id]);
+CREATE NONCLUSTERED INDEX [IX_invoice_subscription_id] ON [plat].[invoice] ([subscription_id]);
+CREATE NONCLUSTERED INDEX [IX_invoice_status_due_date] ON [plat].[invoice] ([status], [due_date]);
+CREATE NONCLUSTERED INDEX [IX_lead_owner_staff_id] ON [plat].[lead] ([owner_staff_id]);
+CREATE NONCLUSTERED INDEX [IX_lead_customer_id] ON [plat].[lead] ([customer_id]);
+CREATE NONCLUSTERED INDEX [IX_lead_stage] ON [plat].[lead] ([stage]);
+CREATE NONCLUSTERED INDEX [IX_ticket_customer_id] ON [plat].[ticket] ([customer_id]);
+CREATE NONCLUSTERED INDEX [IX_ticket_assignee_staff_id] ON [plat].[ticket] ([assignee_staff_id]);
+CREATE NONCLUSTERED INDEX [IX_ticket_status] ON [plat].[ticket] ([status]);
 GO
 
 -- Descriptions (visible in SSMS and to anyone reading the database)
@@ -6607,13 +6787,15 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'statuses: not_started, acti
 EXEC sys.sp_addextendedproperty N'MS_Description', N'views: the view a workspace opens on', N'SCHEMA', N'pm', N'TABLE', N'template_item', N'COLUMN', N'is_default';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'what a template starts with: a view, a status or an organizer feature', N'SCHEMA', N'pm', N'TABLE', N'template_item';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'3 to 50 characters, unique in the company', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'name';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'2 to 5 capitals made from the name, unique in the company, editable; task codes are <task_key>-<n>', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'task_key';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'up to 300 characters', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'description';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'private (members only), workspace (everyone in the company), public (everyone in the company reads, members edit)', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'privacy';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'private (members only), workspace (everyone in the company works in it as a contributor), public (everyone in the company reads, members edit)', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'privacy';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Define Workflow: Select Your Department', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'department_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'work_starter, project_management, marketing_team, product_engineering', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'workflow_template_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'default, custom', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'status_mode';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'custom statuses started from this status template', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'status_template_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Workspace Owner; always a member with workspace_admin', N'SCHEMA', N'pm', N'TABLE', N'workspace', N'COLUMN', N'owner_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the number the next task of a workspace gets; apart from workspace so adding a task does not change the workspace''s row version', N'SCHEMA', N'pm', N'TABLE', N'workspace_task_sequence';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'the workspace''s task statuses, in four groups', N'SCHEMA', N'pm', N'TABLE', N'workspace_status';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'organizer features switched on (priority, tags, time_tracking, story_points, wip_limits ...)', N'SCHEMA', N'pm', N'TABLE', N'workspace_feature';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'a list (the BRD''s "project"): colour, description up to 500, priority, start and end', N'SCHEMA', N'pm', N'TABLE', N'task_list';
@@ -6621,7 +6803,7 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'who may see a private list 
 EXEC sys.sp_addextendedproperty N'MS_Description', N'not in the first build (Sprints column marked Skipped in the design)', N'SCHEMA', N'pm', N'TABLE', N'sprint';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'blank: at the workspace''s top level', N'SCHEMA', N'pm', N'TABLE', N'task', N'COLUMN', N'task_list_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'subtask', N'SCHEMA', N'pm', N'TABLE', N'task', N'COLUMN', N'parent_task_id';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'HR000000001, per company', N'SCHEMA', N'pm', N'TABLE', N'task', N'COLUMN', N'code';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'<workspace task_key>-<n> (ONB-12), unique in the company; tasks made before keys keep HR000000001', N'SCHEMA', N'pm', N'TABLE', N'task', N'COLUMN', N'code';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'task, milestone', N'SCHEMA', N'pm', N'TABLE', N'task', N'COLUMN', N'task_type';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'urgent, high, normal, low', N'SCHEMA', N'pm', N'TABLE', N'task', N'COLUMN', N'priority';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'the due date before an approved extension', N'SCHEMA', N'pm', N'TABLE', N'task', N'COLUMN', N'original_due_date';
@@ -6641,6 +6823,9 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'task, task_list, workspace'
 EXEC sys.sp_addextendedproperty N'MS_Description', N'soft, hard', N'SCHEMA', N'pm', N'TABLE', N'reminder', N'COLUMN', N'reminder_kind';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'delivered by pm.usp_reminder_deliver_due (inbox notification, then notified_at)', N'SCHEMA', N'pm', N'TABLE', N'reminder';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Request Extension: up to the workspace''s max_extensions per task (default 1); approved keeps story points', N'SCHEMA', N'pm', N'TABLE', N'task_extension';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'due_tomorrow, overdue', N'SCHEMA', N'pm', N'TABLE', N'task_due_notice', N'COLUMN', N'notice_kind';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'the due date it was about; a moved due date is announced again', N'SCHEMA', N'pm', N'TABLE', N'task_due_notice', N'COLUMN', N'due_date';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'what pm.usp_task_due_notify (daily) has told an assignee, so a second run sends nothing', N'SCHEMA', N'pm', N'TABLE', N'task_due_notice';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'Add Fields', N'SCHEMA', N'pm', N'TABLE', N'custom_field';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'built-in column key, or cf_<custom_field id>', N'SCHEMA', N'pm', N'TABLE', N'column_permission', N'COLUMN', N'column_key';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'blank, or one workspace role', N'SCHEMA', N'pm', N'TABLE', N'column_permission', N'COLUMN', N'member_role';
@@ -6799,8 +6984,26 @@ EXEC sys.sp_addextendedproperty N'MS_Description', N'checkbox', N'SCHEMA', N'frm
 EXEC sys.sp_addextendedproperty N'MS_Description', N'file', N'SCHEMA', N'frm', N'TABLE', N'form_answer', N'COLUMN', N'file_id';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'one answered question of a response; the column used depends on the type', N'SCHEMA', N'frm', N'TABLE', N'form_answer';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'the chosen option(s) of a single_choice, dropdown or multiple_choice answer', N'SCHEMA', N'frm', N'TABLE', N'form_answer_option';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'super_admin, admin, support, billing', N'SCHEMA', N'plat', N'TABLE', N'staff_account', N'COLUMN', N'role';
-EXEC sys.sp_addextendedproperty N'MS_Description', N'hRango''s own people: Super Admin, Admin, Support, Billing', N'SCHEMA', N'plat', N'TABLE', N'staff_account';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'super_admin, admin, support, billing, sales', N'SCHEMA', N'plat', N'TABLE', N'staff_account', N'COLUMN', N'role';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'hRango''s own people: Super Admin, Admin, Support, Billing, Sales', N'SCHEMA', N'plat', N'TABLE', N'staff_account';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'one sign-in; revoked_at ends it at once', N'SCHEMA', N'plat', N'TABLE', N'staff_session';
 EXEC sys.sp_addextendedproperty N'MS_Description', N'everything platform staff do; kept when the account goes', N'SCHEMA', N'plat', N'TABLE', N'staff_audit';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'active, suspended, cancelled; anything but active stops its people signing in', N'SCHEMA', N'plat', N'TABLE', N'customer', N'COLUMN', N'status';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'an organisation that uses hRango (shown as Organisations); owns one or more companies', N'SCHEMA', N'plat', N'TABLE', N'customer';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'which customer owns which company', N'SCHEMA', N'plat', N'TABLE', N'customer_company';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'NULL: no limit', N'SCHEMA', N'plat', N'TABLE', N'plan', N'COLUMN', N'employee_limit';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'what a customer can buy (documents: Basic, Advanced, Premium; open question B6)', N'SCHEMA', N'plat', N'TABLE', N'plan';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'monthly, annual', N'SCHEMA', N'plat', N'TABLE', N'subscription', N'COLUMN', N'billing_cycle';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'trial, active, past_due, cancelled', N'SCHEMA', N'plat', N'TABLE', N'subscription', N'COLUMN', N'status';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'per billing cycle', N'SCHEMA', N'plat', N'TABLE', N'subscription', N'COLUMN', N'amount';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'a customer on a plan; at most one that is not cancelled. Amounts in PKR', N'SCHEMA', N'plat', N'TABLE', N'subscription';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'issued, paid, void', N'SCHEMA', N'plat', N'TABLE', N'invoice', N'COLUMN', N'status';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'what a customer is billed; overdue is worked out from due_date', N'SCHEMA', N'plat', N'TABLE', N'invoice';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'website, referral, event, outbound, other', N'SCHEMA', N'plat', N'TABLE', N'lead', N'COLUMN', N'source';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'new, contacted, demo, proposal, won, lost', N'SCHEMA', N'plat', N'TABLE', N'lead', N'COLUMN', N'stage';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'set when the lead becomes an organisation', N'SCHEMA', N'plat', N'TABLE', N'lead', N'COLUMN', N'customer_id';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'a prospect in the sales pipeline', N'SCHEMA', N'plat', N'TABLE', N'lead';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'low, normal, high, urgent', N'SCHEMA', N'plat', N'TABLE', N'ticket', N'COLUMN', N'priority';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'open, in_progress, resolved, closed', N'SCHEMA', N'plat', N'TABLE', N'ticket', N'COLUMN', N'status';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'a support case from a customer; holds no HR data', N'SCHEMA', N'plat', N'TABLE', N'ticket';
 GO

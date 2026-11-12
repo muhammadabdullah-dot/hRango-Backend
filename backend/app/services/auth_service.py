@@ -16,6 +16,8 @@ def login(db: Db, email: str, password: str, device: str | None, ip_address: str
         raise _BAD_LOGIN
     if not account["is_active"]:
         raise AppError(403, "ACCOUNT_DISABLED", "This account is switched off. Ask your administrator.")
+    if account["is_blocked"]:
+        raise AppError(403, "ORGANISATION_SUSPENDED", "This organisation is suspended. Contact hRango support.")
     expires_at = token_expiry()
     session = auth_repo.session_create(db, account["id"], device, ip_address, expires_at)
     return create_token(session["session_id"], account["id"], expires_at), session["session_id"], account["id"]

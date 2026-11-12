@@ -40,14 +40,42 @@ their account, and other administrators answer to them, so two administrators ca
 (`auth.fn_access_outranks`). `PATCH /access/users/{id}/account-owner` hands the role to another active Company
 Administrator; only the owner can, and there is always one.
 
+## Staff portal (built 2 Nov 2026)
+
+Same frontend and the organisation app's shell, under `/platform` (sign-in at `/platform/login`). Schema `plat`
+(`erd/source/21-plat.md`). Sample data: `python -m scripts.demo_platform`, on a `*_dev` database only.
+
+| Module | Screen | Who |
+|---|---|---|
+| Dashboard | Organisations registered, subscriptions, revenue, overdue, leads, tickets, renewals due | Everyone; money only for Super Admin, Admin, Billing, and the pipeline value for Sales |
+| Organisations | List, detail, register, edit, suspend, cancel, reactivate | Everyone reads; Super Admin, Admin, Sales register and edit; Super Admin, Admin change status |
+| Subscriptions | One live subscription per organisation | Super Admin, Admin, Billing |
+| Plans | Basic, Advanced, Premium (open question B6) | Everyone reads; Super Admin, Admin change |
+| Invoices | Issue, mark paid, void; overdue from the due date | Super Admin, Admin, Billing |
+| Sales | Leads by stage; a lead registers as an organisation and closes as won | Super Admin, Admin, Sales |
+| Support | Tickets per organisation | Super Admin, Admin, Support |
+| Staff, Activity Log | Staff accounts and everything they do | Super Admin, Admin read; Super Admin changes staff |
+
+Rules worth knowing:
+
+- Registering (`POST /platform/organisations`) creates the company, default roles, Account Owner and customer record
+  in one transaction. It refuses a known company name or sign-in email first, because the provisioning procedures
+  would otherwise reuse the company and reset that account.
+- A suspended or cancelled organisation is stopped in `auth.usp_login_get` and `auth.usp_session_context`, so open
+  sessions end at once. Nothing is deleted.
+- Staff see head counts only. Nothing here reads a customer's HR data.
+- Amounts are PKR, one currency for now. Invoices are recorded by hand: no payment gateway.
+
+Prices in the sample data are placeholders.
+
 ## Still to build
 
-2. **Customer above company**: one customer can own several companies. The Account Owner already exists per company
-   (below) and moves up to the customer here.
+2. **Customer above company**: the table exists (`plat.customer_company`) and an organisation can hold several
+   companies, but there is no screen to add a second one. The Account Owner is still per company and moves up here.
 3. **Executive templates**: CEO / MD, CFO, CTO / COO that a customer copies and adjusts. Job title is not a permission.
-4. **Platform portal**: the sign-in screen (`/platform/login`), read-only staff list and activity are built, in the
-   same frontend. Still to come: customers, plans, module switches, support access, adding staff on screen, and the
-   separate staff address.
+4. **Rest of the portal**: module switches (which modules a plan opens) and enforcing a plan's employee limit, trials
+   that end on their own, renewals that raise invoices, a payment gateway, support access, and the separate staff
+   address.
 
 **Support access rule:** platform staff see no customer HR data by default. Entering a customer needs a reason,
 expires, hides salary and CNIC, and shows in that customer's audit log. Nothing in step 1 can reach a company.

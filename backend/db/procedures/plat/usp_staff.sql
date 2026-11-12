@@ -1,4 +1,4 @@
--- Platform staff: hRango's own people (Super Admin, Admin, Support, Billing). Separate accounts and sessions from
+-- Platform staff: hRango's own people (Super Admin, Admin, Support, Billing, Sales). Separate accounts and sessions from
 -- customers' auth.user_account: nothing here reads or reaches a company. Every change lands in plat.staff_audit.
 
 CREATE OR ALTER PROCEDURE [plat].[usp_staff_login_get]
@@ -134,8 +134,8 @@ BEGIN
         THROW 50400, N'email|Enter a valid email address.', 1;
     IF @display_name IS NULL
         THROW 50400, N'displayName|Enter a name.', 1;
-    IF @role NOT IN (N'super_admin', N'admin', N'support', N'billing')
-        THROW 50400, N'role|Choose super_admin, admin, support or billing.', 1;
+    IF @role NOT IN (N'super_admin', N'admin', N'support', N'billing', N'sales')
+        THROW 50400, N'role|Choose super_admin, admin, support, billing or sales.', 1;
     IF EXISTS (SELECT 1 FROM [plat].[staff_account] WHERE email = @email AND (@id IS NULL OR id <> @id))
         THROW 50409, N'email|STAFF_EMAIL_DUPLICATE|Another staff member signs in with this email.', 1;
 
