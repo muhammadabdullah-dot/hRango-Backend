@@ -2,7 +2,7 @@
 sharing. Access and workspace-role rules are in the pm procedures; nothing here sends anything."""
 import json
 import secrets
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from app.core.db import Db
@@ -144,6 +144,13 @@ def deliver_due_reminders(db: Db, company_id: int | None = None, now: datetime |
     many were sent. For a scheduler (the API worker or scripts/nightly.py, every few minutes). `now` is the
     company's wall-clock time; by default each company's own (reminders are entered in local time)."""
     return projects_collab_repo.deliver_due_reminders(db, company_id, now)
+
+
+def notify_due_tasks(db: Db, company_id: int, today: date | None = None) -> int:
+    """Tells the assignees of open tasks that are due tomorrow or have become overdue, once per task and due
+    date; returns how many notices went out. scripts/nightly.py runs the same procedure for every company.
+    `today` defaults to the company's own date."""
+    return projects_collab_repo.notify_due_tasks(db, company_id, today)
 
 
 # --------------------------------------------------------------------------- sharing

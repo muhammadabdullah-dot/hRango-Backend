@@ -21,7 +21,8 @@ db/
   procedures/<schema>/       fn_*.sql then usp_*.sql, CREATE OR ALTER, re-applied on every seed
   seeds/                     reference data, idempotent, re-applied on every seed
 scripts/seed.py              installs or updates a whole database
-scripts/nightly.py           the nightly jobs: attendance processing, document expiry reminders, unused uploads
+scripts/nightly.py           the nightly jobs: attendance processing, document expiry reminders, project tasks due
+                             tomorrow or overdue, unused uploads
 scripts/process_attendance.py  re-processes attendance time sheets for any date range
 scripts/webhooks.py          delivers webhooks as its own service (instead of the API's worker)
 uploads/                     uploaded files (UPLOAD_DIR); back it up with the database

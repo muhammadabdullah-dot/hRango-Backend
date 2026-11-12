@@ -9,16 +9,16 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    DECLARE @rank INT, @me BIGINT, @role NVARCHAR(30);
-    SELECT @rank = role_rank, @me = employee_id, @role = member_role
+    DECLARE @rank INT, @me BIGINT, @role NVARCHAR(30), @is_member BIT;
+    SELECT @rank = role_rank, @me = employee_id, @role = member_role, @is_member = is_member
     FROM [pm].[fn_workspace_access](@company_id, @actor_user_id) WHERE workspace_id = @id;
     IF @rank IS NULL
         THROW 50404, N'Workspace not found', 1;
 
-    SELECT w.id, w.name, w.description, w.privacy, w.department_id, d.name AS department_name,
+    SELECT w.id, w.name, w.task_key AS [key], w.description, w.privacy, w.department_id, d.name AS department_name,
            wt.code AS workflow_template, wt.name AS workflow_template_name, w.status_mode,
            st.code AS status_template, w.owner_id, NULLIF(CONCAT(o.first_name, N' ', o.last_name), N' ') AS owner_name,
-           @role AS my_role,
+           @role AS my_role, @is_member AS is_member,
            CAST(CASE WHEN EXISTS (SELECT 1 FROM [pm].[favorite] f WHERE f.employee_id = @me AND f.entity_type = N'workspace'
                 AND f.entity_id = w.id AND f.kind = N'favorite') THEN 1 ELSE 0 END AS BIT) AS is_favorite,
            CAST(CASE WHEN EXISTS (SELECT 1 FROM [pm].[favorite] f WHERE f.employee_id = @me AND f.entity_type = N'workspace'

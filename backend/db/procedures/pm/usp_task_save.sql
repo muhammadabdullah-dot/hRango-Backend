@@ -116,23 +116,26 @@ BEGIN
         DECLARE @group NVARCHAR(30) = (SELECT status_group FROM [pm].[workspace_status] WHERE id = @status_id);
 
         BEGIN TRAN;
-            DECLARE @n BIGINT;
-            DECLARE @seq TABLE (n BIGINT);
-            UPDATE [core].[number_sequence] WITH (UPDLOCK, HOLDLOCK)
-            SET next_number = next_number + 1, updated_at = @now
+            -- The code is the workspace's key and its next number (ONB-12). The counter row stays locked
+            -- until COMMIT, so tasks added at the same moment take turns and never share a number.
+            DECLARE @n INT, @task_key NVARCHAR(5) = (SELECT task_key FROM [pm].[workspace] WHERE id = @workspace_id);
+            DECLARE @seq TABLE (n INT);
+            UPDATE [pm].[workspace_task_sequence] WITH (UPDLOCK, HOLDLOCK)
+            SET next_number = next_number + 1, updated_at = @now, updated_by = @actor_user_id
             OUTPUT DELETED.next_number INTO @seq
-            WHERE company_id = @company_id AND prefix = N'PMTASK';
+            WHERE workspace_id = @workspace_id;
             SET @n = (SELECT n FROM @seq);
             IF @n IS NULL
             BEGIN
-                SET @n = 1;
-                INSERT [core].[number_sequence] (company_id, prefix, next_number, created_by) VALUES (@company_id, N'PMTASK', 2, @actor_user_id);
+                -- No counter yet (should not happen after migration 0002): start above the key's codes.
+                SET @n = (SELECT top_number + 1 FROM [pm].[fn_task_key_top](@company_id, @task_key));
+                INSERT [pm].[workspace_task_sequence] (workspace_id, next_number, created_by) VALUES (@workspace_id, @n + 1, @actor_user_id);
             END
 
             INSERT [pm].[task] (company_id, workspace_id, task_list_id, parent_task_id, code, name, description, task_type, status_id,
                                 priority, start_date, start_time, due_date, due_time, time_estimate_minutes, rating, url, recurrence,
                                 sort_order, closed_at, created_by)
-            VALUES (@company_id, @workspace_id, @task_list_id, @parent_task_id, N'HR' + RIGHT(N'000000000' + CAST(@n AS NVARCHAR(20)), 9),
+            VALUES (@company_id, @workspace_id, @task_list_id, @parent_task_id, CONCAT(@task_key, N'-', @n),
                     @name, @description, @task_type, @status_id, @priority, @start_date, @start_time, @due_date, @due_time,
                     @time_estimate_minutes, NULLIF(@rating, 0), @url, @recurrence,
                     ISNULL((SELECT MAX(sort_order) FROM [pm].[task] WHERE workspace_id = @workspace_id), 0) + 10,

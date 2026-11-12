@@ -16,9 +16,9 @@ from app.schemas.common import paginated
 from app.schemas.files import FileRef
 from app.schemas.projects import (ActivityOut, ColumnPermissionIn, ColumnPermissionOut, ColumnPermissionsOut, CoverIn,
                                   CustomFieldIn, CustomFieldOut, FavoriteIn, FavoriteOut, FeaturesIn, FolderIn,
-                                  FolderOut, ListIn, ListOut, MemberIn, MemberOut, MembersIn, PersonOut, StatusesIn, TagIn,
-                                  TagOut, TemplateOut, ViewIn, ViewOut, WorkspaceCreateIn, WorkspaceIn, WorkspaceOut,
-                                  WorkspaceSummaryOut)
+                                  FolderOut, ListIn, ListOut, ListPatchIn, MemberIn, MemberOut, MembersIn, PersonOut,
+                                  StatusesIn, TagIn, TagOut, TemplateOut, ViewIn, ViewOut, ViewPatchIn, WorkspaceCreateIn,
+                                  WorkspaceIn, WorkspaceOut, WorkspaceSummaryOut)
 from app.services import projects_service
 
 M = TypeVar("M", bound=BaseModel)
@@ -218,6 +218,10 @@ def update_list(db: Db, ctx: RequestContext, list_id: int, body: ListIn) -> dict
     return {"data": _list_out(projects_service.save_list(db, ctx, list_id, None, body, row_version_in(body.row_version)))}
 
 
+def patch_list(db: Db, ctx: RequestContext, list_id: int, body: ListPatchIn) -> dict:
+    return {"data": _list_out(projects_service.patch_list(db, ctx, list_id, body, row_version_in(body.row_version)))}
+
+
 def delete_list(db: Db, ctx: RequestContext, list_id: int, row_version: str | None) -> None:
     projects_service.delete_list(db, ctx, list_id, row_version_in(row_version))
 
@@ -233,6 +237,10 @@ def create_view(db: Db, ctx: RequestContext, workspace_id: int, body: ViewIn) ->
 
 def update_view(db: Db, ctx: RequestContext, view_id: int, body: ViewIn) -> dict:
     return {"data": _view_out(projects_service.save_view(db, ctx, view_id, None, body, row_version_in(body.row_version)))}
+
+
+def patch_view(db: Db, ctx: RequestContext, view_id: int, body: ViewPatchIn) -> dict:
+    return {"data": _view_out(projects_service.patch_view(db, ctx, view_id, body, row_version_in(body.row_version)))}
 
 
 def delete_view(db: Db, ctx: RequestContext, view_id: int, row_version: str | None) -> None:

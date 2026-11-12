@@ -12,9 +12,10 @@ from app.core.paging import PageParams, page_params
 from app.middlewares.auth import RequestContext, require
 from app.schemas.common import Item, Paginated
 from app.schemas.projects import (ActivityOut, ColumnPermissionIn, ColumnPermissionsOut, CoverIn, CustomFieldIn,
-                                  CustomFieldOut, FavoriteIn, FavoriteOut, FeaturesIn, FolderIn, FolderOut, ListIn, ListOut, MemberOut,
-                                  MemberRoleIn, MembersIn, PersonOut, StatusesIn, TagIn, TagOut, TemplateOut, ViewIn,
-                                  ViewOut, WorkspaceCreateIn, WorkspaceIn, WorkspaceOut, WorkspaceSummaryOut)
+                                  CustomFieldOut, FavoriteIn, FavoriteOut, FeaturesIn, FolderIn, FolderOut, ListIn, ListOut,
+                                  ListPatchIn, MemberOut, MemberRoleIn, MembersIn, PersonOut, StatusesIn, TagIn, TagOut,
+                                  TemplateOut, ViewIn, ViewOut, ViewPatchIn, WorkspaceCreateIn, WorkspaceIn, WorkspaceOut,
+                                  WorkspaceSummaryOut)
 
 router = APIRouter()
 NO_CONTENT = status.HTTP_204_NO_CONTENT
@@ -189,6 +190,14 @@ def update_list(list_id: int, body: ListIn, db: Db = Depends(get_db),
     return c.update_list(db, ctx, list_id, body)
 
 
+@router.patch("/lists/{list_id}", response_model=Item[ListOut])
+def patch_list(list_id: int, body: ListPatchIn, db: Db = Depends(get_db),
+               ctx: RequestContext = Depends(require("projects.lists.edit"))) -> dict:
+    """Changes only the fields sent: one left out keeps its value, null clears it. rowVersion is required.
+    PUT still replaces every field."""
+    return c.patch_list(db, ctx, list_id, body)
+
+
 @router.delete("/lists/{list_id}", status_code=NO_CONTENT)
 def delete_list(list_id: int, row_version: str | None = Query(None, alias="rowVersion"), db: Db = Depends(get_db),
                 ctx: RequestContext = Depends(require("projects.lists.delete"))) -> Response:
@@ -213,6 +222,13 @@ def create_view(workspace_id: int, body: ViewIn, db: Db = Depends(get_db), ctx: 
 @router.put("/views/{view_id}", response_model=Item[ViewOut])
 def update_view(view_id: int, body: ViewIn, db: Db = Depends(get_db), ctx: RequestContext = Depends(VIEW)) -> dict:
     return c.update_view(db, ctx, view_id, body)
+
+
+@router.patch("/views/{view_id}", response_model=Item[ViewOut])
+def patch_view(view_id: int, body: ViewPatchIn, db: Db = Depends(get_db), ctx: RequestContext = Depends(VIEW)) -> dict:
+    """Changes only the fields sent: one left out keeps its value, null clears it (a flag: false). rowVersion is
+    required. PUT still replaces every field."""
+    return c.patch_view(db, ctx, view_id, body)
 
 
 @router.delete("/views/{view_id}", status_code=NO_CONTENT)

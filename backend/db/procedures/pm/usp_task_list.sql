@@ -73,12 +73,19 @@ BEGIN
             @has_creator BIT = CASE WHEN EXISTS (SELECT 1 FROM @f_creator) THEN 1 ELSE 0 END;
 
     -- 1. Tasks that match.
-    CREATE TABLE #m (id BIGINT PRIMARY KEY, parent_task_id BIGINT, name NVARCHAR(200), code NVARCHAR(30), status_id BIGINT,
+    -- code_sort: the code with its number zero-padded (ONB-000000000009 before ONB-000000000010), so
+    -- workspace codes sort by number; older codes (HR000000011) are padded already and sort as they are.
+    CREATE TABLE #m (id BIGINT PRIMARY KEY, parent_task_id BIGINT, name NVARCHAR(200), code NVARCHAR(30), code_sort NVARCHAR(60),
+                     status_id BIGINT,
                      status_name NVARCHAR(200), status_sort INT, priority NVARCHAR(30), priority_rank INT, due_date DATE,
                      start_date DATE, created_at DATETIME2(0), closed_at DATETIME2(0), time_estimate_minutes INT,
                      story_points_total INT, sort_order INT, task_type NVARCHAR(30), task_list_id BIGINT, list_name NVARCHAR(200));
     INSERT #m
-    SELECT t.id, t.parent_task_id, t.name, t.code, t.status_id, s.name,
+    SELECT t.id, t.parent_task_id, t.name, t.code,
+           CASE WHEN CHARINDEX(N'-', t.code) > 0 AND TRY_CONVERT(BIGINT, SUBSTRING(t.code, CHARINDEX(N'-', t.code) + 1, 30)) IS NOT NULL
+                THEN LEFT(t.code, CHARINDEX(N'-', t.code)) + RIGHT(REPLICATE(N'0', 12) + SUBSTRING(t.code, CHARINDEX(N'-', t.code) + 1, 30), 12)
+                ELSE t.code END,
+           t.status_id, s.name,
            CASE s.status_group WHEN N'not_started' THEN 1 WHEN N'active' THEN 2 WHEN N'done' THEN 3 ELSE 4 END * 100000 + ISNULL(s.sort_order, 0),
            t.priority, CASE t.priority WHEN N'urgent' THEN 1 WHEN N'high' THEN 2 WHEN N'normal' THEN 3 WHEN N'low' THEN 4 END,
            t.due_date, t.start_date, t.created_at, t.closed_at, t.time_estimate_minutes,
@@ -175,8 +182,8 @@ BEGIN
     SELECT ROW_NUMBER() OVER (ORDER BY g.sort_num, g.sort_text, g.group_key,
                CASE WHEN @sort_by = N'name' AND @sort_dir = N'asc' THEN r.name END ASC,
                CASE WHEN @sort_by = N'name' AND @sort_dir = N'desc' THEN r.name END DESC,
-               CASE WHEN @sort_by = N'code' AND @sort_dir = N'asc' THEN r.code END ASC,
-               CASE WHEN @sort_by = N'code' AND @sort_dir = N'desc' THEN r.code END DESC,
+               CASE WHEN @sort_by = N'code' AND @sort_dir = N'asc' THEN r.code_sort END ASC,
+               CASE WHEN @sort_by = N'code' AND @sort_dir = N'desc' THEN r.code_sort END DESC,
                CASE WHEN @sort_by = N'status' AND @sort_dir = N'asc' THEN r.status_sort END ASC,
                CASE WHEN @sort_by = N'status' AND @sort_dir = N'desc' THEN r.status_sort END DESC,
                CASE WHEN @sort_by = N'priority' THEN CASE WHEN r.priority_rank IS NULL THEN 1 ELSE 0 END END,

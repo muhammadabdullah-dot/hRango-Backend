@@ -23,9 +23,9 @@ BEGIN
                AND f.entity_type = N'workspace' AND f.entity_id = w.id AND f.kind = N'favorite'))
     OPTION (RECOMPILE);
 
-    SELECT w.id, w.name, w.description, w.privacy, w.department_id, d.name AS department_name,
+    SELECT w.id, w.name, w.task_key AS [key], w.description, w.privacy, w.department_id, d.name AS department_name,
            w.owner_id, NULLIF(CONCAT(o.first_name, N' ', o.last_name), N' ') AS owner_name,
-           a.member_role AS my_role,
+           a.member_role AS my_role, a.is_member,
            CAST(CASE WHEN fv.id IS NULL THEN 0 ELSE 1 END AS BIT) AS is_favorite,
            CAST(CASE WHEN hd.id IS NULL THEN 0 ELSE 1 END AS BIT) AS is_hidden,
            (SELECT COUNT(*) FROM [pm].[workspace_member] m WHERE m.workspace_id = w.id) AS member_count,

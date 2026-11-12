@@ -44,7 +44,8 @@ END
 GO
 
 -- Adds a comment or reply (@id NULL) or edits the caller's own comment.
--- @mentions: [{"employee_id"} or {"task_id"}].
+-- @mentions: [{"employee_id"} or {"task_id"}]. A new comment tells the people it mentions, the task's
+-- assignees and, for a reply, the author of the comment replied to (pm.usp_task_announce_*).
 CREATE OR ALTER PROCEDURE [pm].[usp_task_comment_save]
     @company_id     BIGINT,
     @actor_user_id  BIGINT,
@@ -110,6 +111,8 @@ BEGIN
                                                 FROM @mn WHERE employee_id IS NOT NULL);
             EXEC [pm].[usp_task_announce_mention] @company_id = @company_id, @actor_user_id = @actor_user_id,
                  @comment_id = @id, @employee_ids = @mentioned;
+            -- After the mentions, which it leaves out: the task's assignees, and for a reply its parent's author.
+            EXEC [pm].[usp_task_announce_comment] @company_id = @company_id, @actor_user_id = @actor_user_id, @comment_id = @id;
         COMMIT;
     END
     ELSE

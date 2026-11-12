@@ -177,6 +177,34 @@ BEGIN
 END
 GO
 
+-- One list, as usp_list_save returns it, for whoever can see it in the workspace (a private list: its
+-- members, workspace admins and HR). PATCH /lists/{id} reads it to keep the fields it is not sent.
+CREATE OR ALTER PROCEDURE [pm].[usp_list_get]
+    @company_id    BIGINT,
+    @actor_user_id BIGINT,
+    @id            BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF NOT EXISTS (SELECT 1 FROM [pm].[task_list] l
+                   JOIN [pm].[fn_workspace_access](@company_id, @actor_user_id) a ON a.workspace_id = l.workspace_id
+                   WHERE l.id = @id
+                     AND (ISNULL(l.privacy, N'workspace') <> N'private' OR a.role_rank >= 4
+                          OR EXISTS (SELECT 1 FROM [pm].[task_list_member] lm WHERE lm.task_list_id = l.id AND lm.employee_id = a.employee_id)))
+        THROW 50404, N'List not found', 1;
+
+    SELECT l.id, l.workspace_id, l.folder_id, l.name, l.privacy, l.color, l.description, l.start_at, l.end_at, l.priority, l.sort_order,
+           (SELECT COUNT(*) FROM [pm].[task] t WHERE t.task_list_id = l.id) AS task_count,
+           (SELECT COUNT(*) FROM [pm].[task] t JOIN [pm].[workspace_status] s ON s.id = t.status_id
+            WHERE t.task_list_id = l.id AND s.status_group IN (N'done', N'closed')) AS closed_count,
+           ISNULL(l.updated_at, l.created_at) AS last_modified_at,
+           (SELECT lm.employee_id FROM [pm].[task_list_member] lm WHERE lm.task_list_id = l.id FOR JSON PATH) AS members_json,
+           l.row_version
+    FROM [pm].[task_list] l WHERE l.id = @id;
+END
+GO
+
 -- Deletes a list. Lists that still hold tasks are refused (move or delete the tasks first).
 CREATE OR ALTER PROCEDURE [pm].[usp_list_delete]
     @company_id    BIGINT,

@@ -1,5 +1,5 @@
 """Project management collaboration data access: comments, attachments, time, reminders, sharing."""
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from app.core.db import Db
@@ -119,6 +119,11 @@ def delete_reminder(db: Db, company_id: int, actor_user_id: int, reminder_id: in
 def deliver_due_reminders(db: Db, company_id: int | None, now: datetime | None) -> int:
     row = db.call_one("pm.usp_reminder_deliver_due", company_id=company_id, now=now)
     return int(row["delivered"]) if row else 0
+
+
+def notify_due_tasks(db: Db, company_id: int, today: date | None) -> int:
+    row = db.call_one("pm.usp_task_due_notify", company_id=company_id, today=today)
+    return int(row["notified"]) if row else 0
 
 
 # --------------------------------------------------------------------------- sharing

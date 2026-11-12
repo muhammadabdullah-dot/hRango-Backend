@@ -45,10 +45,11 @@ def create_workspace(db: Db, company_id: int, actor_user_id: int, name: str, des
 
 
 def save_workspace(db: Db, company_id: int, actor_user_id: int, workspace_id: int, name: str, description: str | None,
-                   privacy: str, department_id: int, owner_id: int, row_version: bytes) -> list[Rows]:
+                   privacy: str, department_id: int, owner_id: int, row_version: bytes,
+                   task_key: str | None = None) -> list[Rows]:
     return db.call_sets("pm.usp_workspace_save", company_id=company_id, actor_user_id=actor_user_id, id=workspace_id,
                         name=name, description=description, privacy=privacy, department_id=department_id,
-                        owner_id=owner_id, row_version=row_version)
+                        owner_id=owner_id, row_version=row_version, task_key=task_key)
 
 
 def set_workspace_cover(db: Db, company_id: int, actor_user_id: int, workspace_id: int, file_id: int | None,
@@ -148,6 +149,10 @@ def save_list(db: Db, company_id: int, actor_user_id: int, list_id: int | None, 
                        sort_order=values["sort_order"], member_ids=member_ids, row_version=row_version)
 
 
+def get_list(db: Db, company_id: int, actor_user_id: int, list_id: int) -> dict[str, Any]:
+    return db.call_one("pm.usp_list_get", company_id=company_id, actor_user_id=actor_user_id, id=list_id)
+
+
 def delete_list(db: Db, company_id: int, actor_user_id: int, list_id: int, row_version: bytes) -> None:
     db.call("pm.usp_list_delete", company_id=company_id, actor_user_id=actor_user_id, id=list_id, row_version=row_version)
 
@@ -159,6 +164,10 @@ def save_view(db: Db, company_id: int, actor_user_id: int, view_id: int | None, 
                        name=values["name"], config=config, is_pinned=values["is_pinned"],
                        is_private=values["is_private"], is_protected=values["is_protected"],
                        is_default=values["is_default"], row_version=row_version)
+
+
+def get_view(db: Db, company_id: int, actor_user_id: int, view_id: int) -> dict[str, Any]:
+    return db.call_one("pm.usp_list_view_get", company_id=company_id, actor_user_id=actor_user_id, id=view_id)
 
 
 def delete_view(db: Db, company_id: int, actor_user_id: int, view_id: int, row_version: bytes) -> None:

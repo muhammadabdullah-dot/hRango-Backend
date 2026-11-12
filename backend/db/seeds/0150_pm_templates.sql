@@ -47,11 +47,11 @@ INSERT @i VALUES
  (N'workflow', N'work_starter', N'status', NULL, N'To Do', N'not_started', N'#979797', 10, 0),
  (N'workflow', N'work_starter', N'status', NULL, N'In-Progress', N'active', N'#2F639A', 20, 0),
  (N'workflow', N'work_starter', N'status', NULL, N'Completed', N'closed', N'#318845', 30, 0),
- -- Project Management
+ -- Project Management. No Gantt: it has no screen (out of scope in the BRD). The MERGE below removes the
+ -- row seeded before (sort order 40) from the template; workspaces made from it keep their views.
  (N'workflow', N'project_management', N'view', N'list', N'List', NULL, NULL, 10, 1),
  (N'workflow', N'project_management', N'view', N'board', N'Board', NULL, NULL, 20, 0),
  (N'workflow', N'project_management', N'view', N'calendar', N'Calendar', NULL, NULL, 30, 0),
- (N'workflow', N'project_management', N'view', N'gantt', N'Gantt', NULL, NULL, 40, 0),
  (N'workflow', N'project_management', N'view', N'team', N'Team', NULL, NULL, 50, 0),
  (N'workflow', N'project_management', N'status', NULL, N'To Do', N'not_started', N'#979797', 10, 0),
  (N'workflow', N'project_management', N'status', NULL, N'Planning', N'active', N'#762AFD', 20, 0),

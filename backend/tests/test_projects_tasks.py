@@ -1,5 +1,8 @@
 """Project management tasks: lifecycle, workspace-role rules on tasks, dependencies, extensions, the
-List view's filters, grouping and sorting, and row version conflicts."""
+List view's filters, grouping and sorting, row version conflicts, and task codes from the workspace key."""
+import re
+import uuid
+
 import pytest
 
 from tests import factories
@@ -33,7 +36,7 @@ def test_task_lifecycle(client, team):
     task = pm.task(client, lead["headers"], wid, name="Write the brief", taskListId=lst["id"], priority="high",
                    dueDate="2030-05-10", timeEstimateMinutes=90, assigneeIds=[str(contributor["employee_id"])],
                    tagIds=[tag["id"]], description="Context")
-    assert task["code"].startswith("HR") and len(task["code"]) == 11
+    assert re.fullmatch(rf"{ws['key']}-\d+", task["code"])  # <workspace key>-<n>, e.g. WAB-1
     assert task["statusGroup"] == "not_started" and task["statusName"] == "To Do"
     assert [a["employeeId"] for a in task["assignees"]] == [str(contributor["employee_id"])]
     assert [t["name"] for t in task["tags"]] == [tag["name"]] and task["listName"] == lst["name"]
@@ -143,7 +146,7 @@ def test_dependencies_block_completion(client, team):
     assert client.delete(f"{API}/dependencies/{dep_id}", headers=lead["headers"]).status_code == 204
 
 
-def test_overdue_extension_and_late_completion(client, team):
+def test_overdue_extension_and_late_completion(client, db, company, team):
     lead, contributor, manager, ws = team["lead"], team["contributor"], team["manager"], team["ws"]
     late = pm.task(client, lead["headers"], ws["id"], dueDate="2020-01-01", assigneeIds=[str(contributor["employee_id"])])
     assert late["isOverdue"] is True
@@ -160,6 +163,18 @@ def test_overdue_extension_and_late_completion(client, team):
     assert r.status_code == 201
     ext = r.json()["data"]["extensions"][0]
     assert ext["status"] == "pending"
+    # Managers and above in the workspace are told (the owner and the manager); a team leader and the
+    # person asking are not.
+    def told(key):
+        return fe.notifications(db, company, team[key]["employee_id"], "pm.task_extension", int(ext["id"]))
+    asked = told("manager")
+    assert [n["notification_type"] for n in asked] == ["projects.extension_requested"]
+    assert asked[0]["title"] == f"Extension requested: {task['code']} {task['name']}"
+    assert asked[0]["link"] == f"/project-management/workspaces/{ws['id']}?task={task['id']}"
+    assert "2030-01-10" in asked[0]["body"] and "2030-02-01" in asked[0]["body"]
+    assert len(told("owner")) == 1 and told("lead") == [] and told("contributor") == []
+    assert len(fe.events(db, company, "projects.extension_requested", int(ext["id"]))) == 1
+
     again = client.post(f"{API}/tasks/{task['id']}/extension-requests", json={"newDueDate": "2030-03-01", "reason": "More"},
                         headers=contributor["headers"])
     assert again.status_code == 409 and again.json()["code"] == "EXTENSION_EXISTS"
@@ -171,6 +186,13 @@ def test_overdue_extension_and_late_completion(client, team):
     approved = r.json()["data"]
     assert approved["dueDate"] == "2030-02-01" and approved["originalDueDate"] == "2030-01-10"
     assert approved["extensions"][0]["status"] == "approved"
+    # The person who asked hears the answer; the manager who decided hears nothing more.
+    answer = told("contributor")
+    assert [n["title"] for n in answer] == [f"Extension approved: {task['code']} {task['name']}"]
+    assert answer[0]["notification_type"] == "projects.extension_decided" and "2030-02-01" in answer[0]["body"]
+    assert len(told("manager")) == 1
+    decided = fe.events(db, company, "projects.extension_decided", int(ext["id"]))
+    assert len(decided) == 1 and decided[0]["data"]["status"] == "approved"
 
 
 def test_wip_limit(client, team):
@@ -336,3 +358,68 @@ def test_covers(client, db, team):
     assert stale.status_code == 409
     rows = client.get(f"{API}/workspaces/{wid}/tasks", headers=lead["headers"]).json()["data"]
     assert next(t for t in rows if t["id"] == task["id"])["cover"]["id"] == pic["id"]
+
+
+def _number() -> str:
+    """Digits only, so a workspace name stays one word for its key (digits separate words)."""
+    return str(uuid.uuid4().int)[:8]
+
+
+def test_task_codes_use_the_workspace_key(client, team):
+    owner = team["owner"]
+    h = owner["headers"]
+
+    def workspace(name):
+        return pm.workspace(client, h, team["dept"], owner["employee_id"], privacy="workspace", name=name)
+
+    def edit(ws, **changes):
+        body = {"name": ws["name"], "privacy": ws["privacy"], "departmentId": ws["departmentId"],
+                "ownerId": ws["ownerId"], "rowVersion": ws["rowVersion"], **changes}
+        return client.put(f"{API}/workspaces/{ws['id']}", json=body, headers=h)
+
+    # The key comes from the name: a one-word name's first three letters; the same again gets a letter more.
+    first, second = workspace(f"Onboarding {_number()}"), workspace(f"Onboarding {_number()}")
+    assert first["key"] == "ONB" and second["key"] == "ONBA"
+    a = pm.task(client, h, first["id"])
+    b = pm.task(client, h, first["id"])
+    sub = pm.task(client, h, first["id"], parentTaskId=a["id"])
+    elsewhere = pm.task(client, h, second["id"])
+    assert [a["code"], b["code"], sub["code"], elsewhere["code"]] == ["ONB-1", "ONB-2", "ONB-3", "ONBA-1"]
+
+    # Search and #task mentions work with the short codes.
+    found = client.get(f"{API}/workspaces/{first['id']}/tasks", params={"q": "ONB-2", "groupBy": "none"}, headers=h)
+    assert [t["id"] for t in found.json()["data"]] == [b["id"]]
+    c = client.post(f"{API}/tasks/{a['id']}/comments", json={"body": "See #ONB-2", "mentions": [{"taskId": b["id"]}]},
+                    headers=h)
+    assert c.status_code == 201 and [m["taskCode"] for m in c.json()["data"]["mentions"]] == ["ONB-2"]
+
+    # Editing the key: 2 to 5 letters A-Z, unique in the company; tasks keep their codes, the count goes on.
+    for bad in ("O", "PEOPLE", "ON1", "Ö N"):
+        r = edit(first, key=bad)
+        assert r.status_code == 422 and "key" in r.json()["fieldErrors"], (bad, r.text)
+    taken = edit(first, key="onba")
+    assert taken.status_code == 409 and taken.json()["code"] == "WORKSPACE_KEY_DUPLICATE"
+    assert "key" in taken.json()["fieldErrors"]
+    r = edit(first, key="hire")
+    assert r.status_code == 200, r.text
+    first = r.json()["data"]
+    assert first["key"] == "HIRE"
+    assert pm.task(client, h, first["id"])["code"] == "HIRE-4"
+    assert client.get(f"{API}/tasks/{a['id']}", headers=h).json()["data"]["code"] == "ONB-1"
+    kept = edit(first, description="Key left out")
+    assert kept.status_code == 200 and kept.json()["data"]["key"] == "HIRE"
+
+    # A key given up and taken by another workspace carries on above the codes it left: ONB-1 to 3 stay unique.
+    r = edit(second, key="ONB")
+    assert r.status_code == 200, r.text
+    assert pm.task(client, h, second["id"])["code"] == "ONB-4"
+
+    # Sorting by code goes by number: ...-9 before ...-10.
+    third = workspace(f"Sorting {_number()}")
+    for _ in range(10):
+        pm.task(client, h, third["id"])
+    by_code = {"groupBy": "none", "sortBy": "code", "pageSize": 100}
+    rows = client.get(f"{API}/workspaces/{third['id']}/tasks", params=by_code, headers=h)
+    assert [t["code"] for t in rows.json()["data"]] == [f"{third['key']}-{n}" for n in range(1, 11)]
+    rows = client.get(f"{API}/workspaces/{third['id']}/tasks", params={**by_code, "sortDir": "desc"}, headers=h)
+    assert [t["code"] for t in rows.json()["data"]] == [f"{third['key']}-{n}" for n in range(10, 0, -1)]

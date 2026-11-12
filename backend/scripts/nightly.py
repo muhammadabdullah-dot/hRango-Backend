@@ -6,10 +6,13 @@ backend folder:
   1. attendance   re-processes yesterday's and today's time sheets (as scripts/process_attendance.py)
   2. documents    tells employees about documents expiring within 30 days, once per document
                   (hr.usp_employee_document_expiry_notify; also published as employees.document_expiring)
-  3. uploads      deletes uploads no record uses, older than a week (core.usp_file_purge_unused), from the
+  3. tasks        tells the assignees of open project tasks that are due tomorrow or have become overdue
+                  (pm.usp_task_due_notify; once per task and due date, so running it twice sends nothing more)
+  4. uploads      deletes uploads no record uses, older than a week (core.usp_file_purge_unused), from the
                   database and from disk
 
 Each job runs per company; one company failing does not stop the others. Exit code 1 if anything failed.
+Run it after midnight: "tomorrow" and "overdue" are counted from the company's own date.
 """
 import sys
 from datetime import date, timedelta
@@ -24,6 +27,7 @@ JOBS = (
                    "@to_date = ?, @quiet = 1, @processed_days = @n OUTPUT; SELECT @n;", "days processed"),
     ("documents", "SET NOCOUNT ON; EXEC hr.usp_employee_document_expiry_notify @company_id = ?, @days_ahead = 30;",
      "documents reported"),
+    ("tasks", "SET NOCOUNT ON; EXEC pm.usp_task_due_notify @company_id = ?;", "due and overdue notices sent"),
 )
 
 

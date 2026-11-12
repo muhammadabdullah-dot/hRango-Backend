@@ -81,10 +81,13 @@ def test_comments(db, client, company, team):
     task = client.get(f"{API}/tasks/{tid}", headers=lead["headers"]).json()["data"]
     assert task["commentCount"] == 2 and task["latestComment"]["body"] == "On it"
 
-    # Non-members of a workspace they can read do not comment.
+    # Everyone in the company works in a "workspace" workspace: a non-member comments like a contributor
+    # (in a "public" one they only read: test_projects.test_workspace_privacy_work_or_read).
     outsider = pm.person(db, client, company, team["dept"])
-    assert client.post(f"{API}/tasks/{tid}/comments", json={"body": "Hi"},
-                       headers=outsider["headers"]).status_code == 403
+    hi = client.post(f"{API}/tasks/{tid}/comments", json={"body": "Hi"}, headers=outsider["headers"])
+    assert hi.status_code == 201, hi.text
+    assert client.delete(f"{API}/comments/{hi.json()['data']['id']}", params={"rowVersion": hi.json()["data"]["rowVersion"]},
+                         headers=outsider["headers"]).status_code == 204
 
     # The author deletes their own; deleting a comment takes its replies too.
     rv = edited.json()["data"]["rowVersion"]
@@ -95,6 +98,49 @@ def test_comments(db, client, company, team):
                          headers=lead["headers"]).status_code == 204
     assert client.get(f"{API}/tasks/{tid}/comments", headers=lead["headers"]).json()["data"] == []
     assert rv
+
+
+def test_comment_and_reply_notifications(db, client, company, team):
+    lead, contributor, other = team["lead"], team["contributor"], team["other"]
+    task = pm.task(client, lead["headers"], team["ws"]["id"], name="Notify me",
+                   assigneeIds=[str(contributor["employee_id"]), str(other["employee_id"])])
+
+    def comment(headers, body, **extra):
+        r = client.post(f"{API}/tasks/{task['id']}/comments", json={"body": body, **extra}, headers=headers)
+        assert r.status_code == 201, r.text
+        return r.json()["data"]
+
+    def told(person, c):
+        return [n["notification_type"] for n in fe.notifications(db, company, person["employee_id"], "pm.task_comment",
+                                                                  int(c["id"]))]
+
+    # A new comment tells the assignees; one it mentions hears once (the mention); the author nothing.
+    top = comment(lead["headers"], "Kick-off notes", mentions=[{"employeeId": other["employee_id"]}])
+    assert told(contributor, top) == ["projects.comment"] and told(other, top) == ["mention"] and told(lead, top) == []
+    n = fe.notifications(db, company, contributor["employee_id"], "pm.task_comment", int(top["id"]))[0]
+    assert n["title"].startswith("Lead ") and n["title"].endswith(f" commented on {task['code']} Notify me")
+    assert n["body"] == "Kick-off notes" and n["link"] == f"/project-management/workspaces/{team['ws']['id']}?task={task['id']}"
+
+    # A reply tells the author of the comment replied to, and the assignees; not the one replying.
+    reply = comment(contributor["headers"], "Done", parentId=top["id"])
+    assert told(lead, reply) == ["projects.comment_reply"] and told(other, reply) == ["projects.comment"]
+    assert told(contributor, reply) == []
+    assert fe.notifications(db, company, lead["employee_id"], "pm.task_comment", int(reply["id"]))[0]["title"].endswith(
+        f" replied to your comment on {task['code']} Notify me")
+    added = fe.events(db, company, "projects.comment_added", int(reply["id"]))
+    assert len(added) == 1 and added[0]["data"]["parentId"] == top["id"]
+    assert {(x["employeeId"], x["kind"]) for x in added[0]["data"]["notified"]} == {
+        (str(lead["employee_id"]), "projects.comment_reply"), (str(other["employee_id"]), "projects.comment")}
+
+    # A reply to an assignee's comment: they hear once, as an assignee.
+    back = comment(lead["headers"], "Thanks", parentId=reply["id"])
+    assert told(contributor, back) == ["projects.comment"]
+
+    # Editing a comment tells nobody new (only people newly mentioned, as before).
+    r = client.put(f"{API}/comments/{top['id']}", json={"body": "Kick-off notes v2", "rowVersion": top["rowVersion"]},
+                   headers=lead["headers"])
+    assert r.status_code == 200, r.text
+    assert told(contributor, top) == ["projects.comment"]
 
 
 def test_attachments(client, db, company, team):

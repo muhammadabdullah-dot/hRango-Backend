@@ -1,5 +1,7 @@
 -- Edit Workspace: name, description, visibility, department, owner (workspace admins and HR;
 -- only a workspace admin hands the workspace to another owner). Returns the workspace.
+-- @task_key: a new key for the task codes (2 to 5 capitals, unique in the company); NULL keeps it.
+-- Tasks keep the codes they have; new ones get the new key.
 CREATE OR ALTER PROCEDURE [pm].[usp_workspace_save]
     @company_id    BIGINT,
     @actor_user_id BIGINT,
@@ -9,7 +11,8 @@ CREATE OR ALTER PROCEDURE [pm].[usp_workspace_save]
     @privacy       NVARCHAR(30),
     @department_id BIGINT,
     @owner_id      BIGINT,
-    @row_version   BINARY(8)
+    @row_version   BINARY(8),
+    @task_key      NVARCHAR(50) = NULL    -- wider than a key, so a long one is refused rather than cut short
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -36,24 +39,39 @@ BEGIN
         THROW 50400, N'ownerId|Workspace owner not found.', 1;
     IF EXISTS (SELECT 1 FROM [pm].[workspace] WHERE company_id = @company_id AND name = @name AND id <> @id)
         THROW 50409, N'name|WORKSPACE_DUPLICATE|A workspace with this name already exists.', 1;
+    SET @task_key = UPPER(NULLIF(LTRIM(RTRIM(@task_key)), N''));
+    IF @task_key IS NOT NULL AND (LEN(@task_key) NOT BETWEEN 2 AND 5 OR @task_key COLLATE Latin1_General_BIN LIKE N'%[^A-Z]%')
+        THROW 50400, N'key|A key is 2 to 5 capital letters (A to Z).', 1;
+    IF @task_key IS NOT NULL AND EXISTS (SELECT 1 FROM [pm].[workspace] WHERE company_id = @company_id AND task_key = @task_key AND id <> @id)
+        THROW 50409, N'key|WORKSPACE_KEY_DUPLICATE|Another workspace already uses this key.', 1;
 
-    DECLARE @old_name NVARCHAR(200), @old_desc NVARCHAR(MAX), @old_privacy NVARCHAR(30), @old_dept BIGINT, @old_owner BIGINT, @old_rv BINARY(8);
+    DECLARE @old_name NVARCHAR(200), @old_desc NVARCHAR(MAX), @old_privacy NVARCHAR(30), @old_dept BIGINT, @old_owner BIGINT, @old_rv BINARY(8),
+            @old_key NVARCHAR(5);
     SELECT @old_name = name, @old_desc = description, @old_privacy = privacy, @old_dept = department_id,
-           @old_owner = owner_id, @old_rv = row_version
+           @old_owner = owner_id, @old_rv = row_version, @old_key = task_key
     FROM [pm].[workspace] WHERE id = @id;
     IF @old_rv <> @row_version
         THROW 50409, N'Someone else changed this workspace. Reload it and try again', 1;
     IF @owner_id <> @old_owner AND @rank < 5
         THROW 50403, N'Only a workspace admin can change the owner.', 1;
+    SET @task_key = ISNULL(@task_key, @old_key);
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;
         UPDATE [pm].[workspace]
-        SET name = @name, description = @description, privacy = @privacy, department_id = @department_id,
+        SET name = @name, task_key = @task_key, description = @description, privacy = @privacy, department_id = @department_id,
             owner_id = @owner_id, updated_at = @now, updated_by = @actor_user_id
         WHERE id = @id AND row_version = @row_version;
         IF @@ROWCOUNT = 0
             THROW 50409, N'Someone else changed this workspace. Reload it and try again', 1;
+
+        -- A key another workspace used before: carry on above the codes it left, so none repeats.
+        IF @task_key <> @old_key
+            UPDATE s SET next_number = CASE WHEN u.top_number >= s.next_number THEN u.top_number + 1 ELSE s.next_number END,
+                         updated_at = @now, updated_by = @actor_user_id
+            FROM [pm].[workspace_task_sequence] s
+            CROSS APPLY [pm].[fn_task_key_top](@company_id, @task_key) u
+            WHERE s.workspace_id = @id;
 
         IF @owner_id <> @old_owner
         BEGIN
@@ -68,6 +86,7 @@ BEGIN
         SELECT N'pm.workspace', @id, f.field_name, f.old_value, f.new_value, N'update', @actor_user_id, @now
         FROM (VALUES
             (N'name', @old_name, @name),
+            (N'task_key', @old_key, @task_key),
             (N'description', @old_desc, @description),
             (N'privacy', @old_privacy, @privacy),
             (N'department_id', CONVERT(NVARCHAR(30), @old_dept), CONVERT(NVARCHAR(30), @department_id)),

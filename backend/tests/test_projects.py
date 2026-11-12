@@ -1,7 +1,9 @@
-"""Project management: the Create Workspace wizard, workspace roles, members, statuses, features,
-column permissions, custom fields, folders, lists, views, favourites and company RBAC refusal."""
+"""Project management: the Create Workspace wizard, workspace roles and privacy, members, statuses, features,
+column permissions, custom fields, folders, lists, views (PUT and PATCH), favourites, company RBAC refusal and
+the default roles' project codes."""
 import pytest
 
+from app.core.default_roles import expanded
 from tests import factories
 from tests import factories_projects as pm
 
@@ -28,6 +30,9 @@ def test_templates(client, team):
     assert [v["viewType"] for v in starter["views"]] == ["list", "board"]
     assert [s["name"] for s in starter["statuses"]] == ["To Do", "In-Progress", "Completed"]
     assert len(starter["features"]) == 12
+    # No Gantt: it has no screen (the seed removes the row it used to have).
+    project = next(t for t in workflows if t["code"] == "project_management")
+    assert [v["viewType"] for v in project["views"]] == ["list", "board", "calendar", "team"]
     statuses = client.get(f"{API}/templates", params={"kind": "status"}, headers=h).json()["data"]
     assert {t["code"] for t in statuses} == {"custom", "content", "kanban", "marketing", "scrum"}
 
@@ -81,6 +86,47 @@ def test_private_workspace_is_for_members(client, team):
     assert ws["id"] not in [w["id"] for w in listed["data"]]
     mine = client.get(f"{API}/workspaces", params={"q": ws["name"]}, headers=team["contributor"]["headers"]).json()
     assert mine["data"][0]["myRole"] == "contributor"
+
+
+def test_workspace_privacy_work_or_read(db, client, company, team):
+    """privacy "workspace": everyone in the company works in it like a contributor; "public": everyone reads,
+    only members change things; "private": members only (test_private_workspace_is_for_members)."""
+    owner, outsider = team["owner"], team["outsider"]
+    work = pm.workspace(client, owner["headers"], team["dept"], owner["employee_id"], privacy="workspace")
+    public = pm.workspace(client, owner["headers"], team["dept"], owner["employee_id"], privacy="public")
+    h = outsider["headers"]
+
+    for ws, role in ((work, "contributor"), (public, None)):
+        seen = client.get(f"{API}/workspaces/{ws['id']}", headers=h).json()["data"]
+        assert seen["myRole"] == role and seen["isMember"] is False, ws["privacy"]
+        listed = client.get(f"{API}/workspaces", params={"q": ws["name"]}, headers=h).json()["data"]
+        assert listed[0]["myRole"] == role and listed[0]["isMember"] is False
+    assert client.get(f"{API}/workspaces/{work['id']}", headers=owner["headers"]).json()["data"]["isMember"] is True
+
+    # Working: comments and docs in the "workspace" one; the public one is read-only.
+    in_work = pm.task(client, owner["headers"], work["id"])
+    in_public = pm.task(client, owner["headers"], public["id"])
+    r = client.post(f"{API}/tasks/{in_work['id']}/comments", json={"body": "I can help"}, headers=h)
+    assert r.status_code == 201, r.text
+    assert client.post(f"{API}/tasks/{in_public['id']}/comments", json={"body": "Me too"}, headers=h).status_code == 403
+    assert client.get(f"{API}/tasks/{in_public['id']}", headers=h).status_code == 200
+    assert client.post(f"{API}/workspaces/{work['id']}/docs", json={"title": "Notes"}, headers=h).status_code == 201
+    assert client.post(f"{API}/workspaces/{public['id']}/docs", json={"title": "Notes"}, headers=h).status_code == 403
+    # Still a contributor: no top-level tasks.
+    assert client.post(f"{API}/tasks", json={"workspaceId": work["id"], "name": "Mine"}, headers=h).status_code == 403
+    assert client.get(f"{API}/tasks/{in_work['id']}", headers=h).json()["data"]["myRole"] == "contributor"
+
+    # The contributors' column rules apply to them too.
+    r = client.put(f"{API}/workspaces/{work['id']}/column-permissions/priority",
+                   json={"roles": [{"memberRole": "contributor", "permissionLevel": "private"}]}, headers=owner["headers"])
+    assert r.status_code == 200, r.text
+    rows = client.get(f"{API}/workspaces/{work['id']}/tasks", params={"groupBy": "none"}, headers=h).json()
+    assert rows["hiddenColumns"] == ["priority"]
+
+    # An account without an employee record only reads.
+    system = factories.login_as(db, client, company, role_codes="employee")
+    pm.grant_projects(db, system["user_id"])
+    assert client.get(f"{API}/workspaces/{work['id']}", headers=system["headers"]).json()["data"]["myRole"] is None
 
 
 def test_private_workspace_needs_an_employee_creator(db, client, company, team):
@@ -283,3 +329,93 @@ def test_delete_workspace(client, team):
                          headers=owner["headers"]).status_code == 204
     assert client.get(f"{API}/workspaces/{ws['id']}", headers=owner["headers"]).status_code == 404
     assert client.get(f"{API}/tasks/{parent['id']}", headers=owner["headers"]).status_code == 404
+
+
+def test_patch_list_and_view_keep_what_is_not_sent(client, team):
+    owner, manager, lead, contributor = team["owner"], team["manager"], team["lead"], team["contributor"]
+    wid = team["ws"]["id"]
+    mh = manager["headers"]
+    folder = client.post(f"{API}/workspaces/{wid}/folders", json={"name": f"Folder {factories.tag()}"},
+                         headers=mh).json()["data"]
+    lst = client.post(f"{API}/workspaces/{wid}/lists",
+                      json={"name": f"Patch {factories.tag()}", "color": "#7127EA", "description": "Keep me",
+                            "priority": "high", "privacy": "public", "startAt": "2030-01-01T09:00:00",
+                            "endAt": "2030-02-01T09:00:00"}, headers=mh).json()["data"]
+    url = f"{API}/lists/{lst['id']}"
+
+    # A rename sends only the name; everything else stays.
+    new_name = f"Renamed {factories.tag()}"
+    r = client.patch(url, json={"name": new_name, "rowVersion": lst["rowVersion"]}, headers=mh)
+    assert r.status_code == 200, r.text
+    renamed = r.json()["data"]
+    assert renamed["name"] == new_name and renamed["color"] == "#7127EA" and renamed["description"] == "Keep me"
+    assert renamed["priority"] == "high" and renamed["privacy"] == "public" and renamed["folderId"] is None
+    assert renamed["startAt"].startswith("2030-01-01T09:00") and renamed["endAt"].startswith("2030-02-01T09:00")
+
+    # A move into a folder, and an explicit null that clears one field.
+    r = client.patch(url, json={"folderId": folder["id"], "description": None, "rowVersion": renamed["rowVersion"]},
+                     headers=mh)
+    assert r.status_code == 200, r.text
+    moved = r.json()["data"]
+    assert moved["folderId"] == folder["id"] and moved["description"] is None
+    assert moved["name"] == new_name and moved["color"] == "#7127EA" and moved["priority"] == "high"
+
+    # rowVersion is still required and checked; the name cannot be cleared; the workspace role still decides.
+    missing = client.patch(url, json={"name": "No version"}, headers=mh)
+    assert missing.status_code == 422 and "rowVersion" in missing.json()["fieldErrors"]
+    assert client.patch(url, json={"name": "Stale", "rowVersion": lst["rowVersion"]}, headers=mh).status_code == 409
+    cleared = client.patch(url, json={"name": None, "rowVersion": moved["rowVersion"]}, headers=mh)
+    assert cleared.status_code == 422 and "name" in cleared.json()["fieldErrors"]
+    assert client.patch(url, json={"color": "#000000", "rowVersion": moved["rowVersion"]},
+                        headers=lead["headers"]).status_code == 403
+    assert client.patch(f"{API}/lists/999999999", json={"name": "x", "rowVersion": moved["rowVersion"]},
+                        headers=mh).status_code == 404
+
+    # PUT still replaces every field.
+    r = client.put(url, json={"name": new_name, "rowVersion": moved["rowVersion"]}, headers=mh)
+    assert r.status_code == 200 and r.json()["data"]["color"] is None and r.json()["data"]["privacy"] == "workspace"
+
+    # Views: the same for a shared view (workspace admins and HR).
+    view = client.post(f"{API}/workspaces/{wid}/views",
+                       json={"viewType": "board", "name": f"Board {factories.tag()}", "isPinned": True,
+                             "config": {"groupBy": "status"}}, headers=owner["headers"]).json()["data"]
+    vurl = f"{API}/views/{view['id']}"
+    r = client.patch(vurl, json={"name": "Team board", "rowVersion": view["rowVersion"]}, headers=owner["headers"])
+    assert r.status_code == 200, r.text
+    v = r.json()["data"]
+    assert v["name"] == "Team board" and v["viewType"] == "board" and v["isPinned"] is True
+    assert v["config"] == {"groupBy": "status"}
+    r = client.patch(vurl, json={"config": None, "isPinned": None, "rowVersion": v["rowVersion"]}, headers=owner["headers"])
+    assert r.status_code == 200, r.text
+    v = r.json()["data"]
+    assert v["config"] is None and v["isPinned"] is False and v["name"] == "Team board"
+    assert client.patch(vurl, json={"name": "Mine now", "rowVersion": v["rowVersion"]},
+                        headers=contributor["headers"]).status_code == 403
+    assert client.patch(vurl, json={"name": "Stale", "rowVersion": view["rowVersion"]},
+                        headers=owner["headers"]).status_code == 409
+
+
+def test_default_roles_rename_and_delete_folders_and_lists(db, client, company, team):
+    """Every default role that holds projects codes holds the folder and list ones too (inside a workspace
+    the workspace role still decides: managers and above). HR officers used to miss projects.lists.delete."""
+    for role in expanded():
+        codes = {g["code"] for g in role["grants"]}
+        if any(c.startswith("projects.") and not c.endswith(".view") for c in codes):
+            assert {"projects.lists.edit", "projects.lists.delete"} <= codes, role["code"]
+
+    owner = team["owner"]
+    officer = pm.person(db, client, company, team["dept"], role_codes="hr_officer", grant=False)
+    ws = pm.workspace(client, owner["headers"], team["dept"], owner["employee_id"],
+                      members=[(officer["employee_id"], "manager")])
+    folder = client.post(f"{API}/workspaces/{ws['id']}/folders", json={"name": "Old"}, headers=owner["headers"]).json()["data"]
+    lst = client.post(f"{API}/workspaces/{ws['id']}/lists", json={"name": "Old list"}, headers=owner["headers"]).json()["data"]
+    oh = officer["headers"]
+    r = client.put(f"{API}/folders/{folder['id']}", json={"name": "New", "rowVersion": folder["rowVersion"]}, headers=oh)
+    assert r.status_code == 200, r.text
+    r = client.patch(f"{API}/lists/{lst['id']}", json={"folderId": folder["id"], "rowVersion": lst["rowVersion"]}, headers=oh)
+    assert r.status_code == 200, r.text
+    assert client.delete(f"{API}/lists/{lst['id']}", params={"rowVersion": r.json()["data"]["rowVersion"]},
+                         headers=oh).status_code == 204
+    folder = client.get(f"{API}/workspaces/{ws['id']}", headers=owner["headers"]).json()["data"]["folders"][0]
+    assert client.delete(f"{API}/folders/{folder['id']}", params={"rowVersion": folder["rowVersion"]},
+                         headers=oh).status_code == 204

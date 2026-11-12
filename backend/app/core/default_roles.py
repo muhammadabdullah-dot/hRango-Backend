@@ -4,8 +4,9 @@ Departmental roles are one role plus a scope, not one role per department: a Dep
 their own department (and its sub-departments), whichever department that is.
 
 Each role lists (pattern, scope) grants, matched against the catalogue codes with fnmatch, and
-patterns to leave out. The first grant that matches a code sets its scope, so list the wider scope
-first where a role has both. `no_sensitive` leaves out every code marked sensitive (salary, bank,
+patterns to leave out (`exclude`; `exclude_ok` keeps codes those would leave out). The first grant
+that matches a code sets its scope, so list the wider scope first where a role has both.
+`no_sensitive` leaves out every code marked sensitive (salary, bank,
 CNIC, loan and payslip figures, ACC-9) except for the holder's own records and the patterns in `sensitive_ok`.
 Managers hold those back; executives see pay (EXECUTIVE_PAY). Because roles are patterns, codes a module adds later reach the
 right roles on the next seed run; a code a customer removed from a role is not offered again
@@ -113,7 +114,10 @@ ROLES = [
      "grants": [("*", "company")],
      "exclude": [*ADMIN_AREAS, *SETTINGS, "*.delete", "payroll.*", "loans.*", "employees.salary.*",
                  "employees.bank_accounts.*", "manpower.planning.*", "manpower.e_budgeting.*",
-                 "manpower.budget_approvals.*", "benefits.health.*", "performance.increments.*"]},
+                 "manpower.budget_approvals.*", "benefits.health.*", "performance.increments.*"],
+     # Folders and lists: inside a workspace its role decides (managers and above, pm.usp_folder_*), so an HR
+     # officer who manages one can delete them there like every other role that holds projects codes.
+     "exclude_ok": ["projects.lists.delete"]},
     {"code": "payroll_manager", "name": "Payroll Manager",
      "description": "Payroll, loans and final settlement, including salary and bank figures.",
      "grants": [("payroll.*", "company"), ("loans.*", "company"), ("employees.directory.view", "company"),
@@ -170,7 +174,8 @@ def expanded() -> list[dict]:
     for role in ROLES:
         grants = {}
         for code in (r["code"] for r in rows):
-            if any(fnmatchcase(code, p) for p in role["exclude"]):
+            if (any(fnmatchcase(code, p) for p in role["exclude"])
+                    and not any(fnmatchcase(code, p) for p in role.get("exclude_ok", ()))):
                 continue
             # Sensitive figures of other people stay out unless the role is meant to see them.
             own_only = (role.get("no_sensitive") and code in sensitive

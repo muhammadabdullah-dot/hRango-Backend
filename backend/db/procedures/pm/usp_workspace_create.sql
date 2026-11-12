@@ -6,6 +6,7 @@
 --   @features  [{"feature_code", "setting_value"}]               blank: the template's features
 --   @members   [{"employee_id", "member_role"}]
 -- The owner, and the creator when they are an employee, become members with workspace_admin.
+-- The task key (ONB in ONB-12) is made from the name (pm.fn_workspace_key_base); it can be changed later.
 CREATE OR ALTER PROCEDURE [pm].[usp_workspace_create]
     @company_id        BIGINT,
     @actor_user_id     BIGINT,
@@ -129,13 +130,22 @@ BEGIN
     INSERT @mb (employee_id, member_role) SELECT @owner_id, N'workspace_admin' WHERE NOT EXISTS (SELECT 1 FROM @mb WHERE employee_id = @owner_id);
     INSERT @mb (employee_id, member_role) SELECT @me, N'workspace_admin' WHERE @me IS NOT NULL AND NOT EXISTS (SELECT 1 FROM @mb WHERE employee_id = @me);
 
+    DECLARE @task_key NVARCHAR(5);
+    SELECT @task_key = k.task_key FROM [pm].[fn_workspace_key_free](@company_id, [pm].[fn_workspace_key_base](@name), NULL) k;
+    IF @task_key IS NULL
+        THROW 50409, N'name|WORKSPACE_KEY_DUPLICATE|Every task key this name suggests is taken. Choose another name.', 1;
+
     DECLARE @id BIGINT, @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;
-        INSERT [pm].[workspace] (company_id, name, description, privacy, department_id, workflow_template_id, status_mode,
+        INSERT [pm].[workspace] (company_id, name, task_key, description, privacy, department_id, workflow_template_id, status_mode,
                                  status_template_id, owner_id, created_by)
-        VALUES (@company_id, @name, @description, @privacy, @department_id, @workflow_id, @status_mode,
+        VALUES (@company_id, @name, @task_key, @description, @privacy, @department_id, @workflow_id, @status_mode,
                 @status_template_id, @owner_id, @actor_user_id);
         SET @id = SCOPE_IDENTITY();
+
+        -- Codes start at 1, or above the codes a key freed by a rename elsewhere left behind.
+        INSERT [pm].[workspace_task_sequence] (workspace_id, next_number, created_by)
+        SELECT @id, top_number + 1, @actor_user_id FROM [pm].[fn_task_key_top](@company_id, @task_key);
 
         INSERT [pm].[workspace_status] (workspace_id, status_group, name, color, sort_order, wip_limit, created_by)
         SELECT @id, status_group, name, color, sort_order, wip_limit, @actor_user_id FROM @st;

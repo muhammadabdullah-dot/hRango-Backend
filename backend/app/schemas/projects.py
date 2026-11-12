@@ -108,6 +108,9 @@ class WorkspaceCreateIn(ApiModel):
 
 class WorkspaceIn(ApiModel):
     name: str = Field(min_length=3, max_length=50)
+    # The key in front of task codes (ONB in ONB-12): 2 to 5 letters A-Z, unique in the company. Left out or
+    # null keeps it; tasks keep the codes they have.
+    key: str | None = Field(None, max_length=20)
     description: str | None = Field(None, max_length=300)
     privacy: Privacy
     owner_id: int
@@ -196,14 +199,19 @@ class ListOut(ApiModel):
 class WorkspaceSummaryOut(ApiModel):
     id: str
     name: str
+    # The key in front of the workspace's task codes (ONB in ONB-12).
+    key: str
     description: str | None
     privacy: str
     department_id: str | None
     department_name: str | None
     owner_id: str
     owner_name: str | None
-    # The caller's workspace role; null when they are not a member of a workspace they can read.
+    # The workspace role the caller works with: their member role; contributor for anyone in the company in a
+    # workspace whose privacy is "workspace"; null when they only read (a "public" one they are not a member of).
     my_role: str | None
+    # Whether the caller is a member (myRole can be contributor without it, see above).
+    is_member: bool
     is_favorite: bool
     is_hidden: bool
     member_count: int
@@ -329,6 +337,22 @@ class ListIn(ApiModel):
     row_version: str | None = None
 
 
+class ListPatchIn(ApiModel):
+    """PATCH /lists/{id}: only the fields sent change. A field left out keeps its value; null clears it
+    (memberIds null: no members). name and privacy cannot be cleared. rowVersion is required."""
+    name: str | None = Field(None, min_length=1, max_length=200)
+    folder_id: int | None = None
+    privacy: Privacy | None = None
+    color: str | None = Field(None, max_length=20)
+    description: str | None = Field(None, max_length=500)
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    priority: Priority | None = None
+    sort_order: int | None = None
+    member_ids: list[int] | None = None
+    row_version: str | None = None
+
+
 class ViewIn(ApiModel):
     """config holds the Customize View settings: columns, filters, sort, grouping, subtask display."""
     view_type: ViewType
@@ -339,6 +363,19 @@ class ViewIn(ApiModel):
     is_private: bool = False
     is_protected: bool = False
     is_default: bool = False
+    row_version: str | None = None
+
+
+class ViewPatchIn(ApiModel):
+    """PATCH /views/{id}: only the fields sent change. A field left out keeps its value; null clears it
+    (config null: no settings; a flag null: false). viewType and name cannot be cleared. rowVersion is required."""
+    view_type: ViewType | None = None
+    name: str | None = Field(None, min_length=1, max_length=200)
+    config: dict[str, Any] | None = None
+    is_pinned: bool | None = None
+    is_private: bool | None = None
+    is_protected: bool | None = None
+    is_default: bool | None = None
     row_version: str | None = None
 
 

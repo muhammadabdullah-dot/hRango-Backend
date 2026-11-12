@@ -48,6 +48,7 @@ BEGIN
         DELETE [pm].[workspace_feature] WHERE workspace_id = @id;
         DELETE [pm].[workspace_status] WHERE workspace_id = @id;
         DELETE [pm].[workspace_member] WHERE workspace_id = @id;
+        DELETE [pm].[workspace_task_sequence] WHERE workspace_id = @id;
         DELETE [pm].[workspace] WHERE id = @id AND company_id = @company_id;
 
         INSERT [core].[audit_log] (entity_type, entity_id, action_name, performed_by_user_id, performed_at)

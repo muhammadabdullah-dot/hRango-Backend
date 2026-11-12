@@ -27,4 +27,11 @@ SCREENS: list[tuple[str, str, tuple[str, ...], bool]] = [
 EVENTS: list[tuple[str, str]] = [
     ("projects.task_assigned", "People were newly assigned to a task (on create or on Assignees); each is notified."),
     ("projects.comment_mention", "A task comment mentions people (new, or newly added on edit); each is notified."),
+    ("projects.comment_added", "A comment or reply was added to a task; the task's assignees and, for a reply, the "
+                               "author of the comment replied to are notified (people it mentions hear once)."),
+    ("projects.extension_requested", "An assignee asked for a later due date; the workspace's managers and above "
+                                     "are notified."),
+    ("projects.extension_decided", "An extension request was approved or rejected; the person who asked is notified."),
+    ("projects.task_due_tomorrow", "Daily job: an open task is due tomorrow; its assignees are notified."),
+    ("projects.task_overdue", "Daily job: an open task has become overdue; its assignees are notified."),
 ]

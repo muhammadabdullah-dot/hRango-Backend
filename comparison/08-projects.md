@@ -62,7 +62,8 @@ README "Project Management" and "departures".
 - `workspace_status.wip_limit` (WIP limits per phase); UNIQUE (workspace_id, name).
 - `folder.sort_order`; `task_list.sort_order`, `start_at`/`end_at` (BRD "date and time"); UNIQUE names per workspace.
 - New `task_list_member` (BRD "Add Members to Project"; who sees a private list).
-- `task`: `company_id` (per-company code `HR000000001`), `workspace_id` (tasks may sit outside a list),
+- `task`: `company_id` (code `<workspace task_key>-<n>`, e.g. `ONB-12`, unique per company; tasks made before
+  12 Nov 2026 keep `HR000000001`), `workspace_id` (tasks may sit outside a list),
   dates split into `start_date/start_time/due_date/due_time` (time optional in the design),
   `original_due_date`, `rating`, `url` (URL Connection), `sort_order`, `is_closed_late`.
 - `task_dependency` stored once as "waits on" (`kind` waiting_on / linked); UNIQUE pair.
@@ -85,7 +86,9 @@ README "Project Management" and "departures".
 
 ## Workspace roles (enforced in the pm procedures)
 
-Rank: workspace_admin 5, hr 4, manager 3, team_leader 2, contributor 1; a non-member reading a non-private workspace 0.
+Rank: workspace_admin 5, hr 4, manager 3, team_leader 2, contributor 1. A company employee who is not a member
+works in a `workspace`-privacy workspace as a contributor (1, `myRole` contributor, `isMember` false) and only
+reads a `public` one (0); an account without an employee record only reads.
 
 | Action | Who |
 |---|---|
@@ -138,9 +141,10 @@ Column permissions on top: Can View or Private refuse the edit; Private blanks t
   view / create / edit / delete / assign on tasks, comments, time_tracking, reminders; extensions.create),
   because inside a workspace the workspace role decides. Today Employee gets only view / create, so a
   contributor cannot change a status. Tests grant the codes per user (`tests/factories_projects.py`).
-- Notifications (core.notification): task assignment and mentions notify; reminders notify once a scheduler
-  calls `projects_collab_service.deliver_due_reminders(db)` (every few minutes; worker or `scripts/nightly.py`,
-  not wired: shared files). Comment assignment and extension decisions do not notify yet.
+- Notifications (core.notification): task assignment, mentions, new comments (assignees), replies (the comment's
+  author), extension requests (managers and above) and decisions (the requester) notify; due-tomorrow and overdue
+  notices come from `scripts/nightly.py` (`pm.usp_task_due_notify`); reminders notify through the API's worker
+  (`deliver_due_reminders`). Comment assignment does not notify yet.
 - File storage: attachments and covers keep file details only (`storage_path` empty).
 - Requests module: an optional `task_extension` request kind if extensions should follow approval flows.
 - Employees module: photo URL for the people picker (only `photoFileId` is returned).
@@ -162,4 +166,17 @@ that file and `frontend/src/features/project-management/api/dashboards.api.ts`. 
 | T8 Location fields | custom field type `location`, value `{address, lat, lng}`; `GET .../tasks?hasLocation=true` | as custom fields / tasks | validated in Python and in the procedure | Map view itself; geocoding |
 | T9 External storage | `GET /api/integrations/storage`, `POST .../{provider}/connect`, `GET .../{provider}/callback`, `DELETE .../{provider}`, `GET .../{provider}/files`; `POST /projects/tasks/{taskId}/attachments/link` | `projects.storage.view/create/delete`; link `projects.tasks.edit` | four providers listed as not connected; connect / callback / files 503 `STORAGE_NOT_CONFIGURED`; disconnect a no-op 204; link attachments stored (`task_external_file`, id `link-<n>`, `fileId` null, `url` = provider address) and listed / counted / deleted with the task's files | OAuth apps, a per-user connection table (tokens encrypted), file browsing, checking a link against the connection; the router `app/routers/integrations_storage.py` is not registered in `app/main.py` yet |
 | T11 Personal List | `GET/POST /projects/personal-list`, `PATCH/DELETE /projects/personal-list/{id}` | `projects.workspaces.view` (own items) | per sign-in, open items first, 120 characters, 409 on a stale row version, 500 items at most | none |
+
+## Third build (frontend handoff of 11 Nov 2026, B1-B6)
+
+- B1 privacy: `workspace` = everyone in the company works in it as a contributor; `public` = everyone reads, members
+  change things (`pm.fn_workspace_access`, `pm.fn_column_levels`). `WorkspaceSummaryOut.isMember` added.
+- B2 task codes: `workspace.task_key` (2-5 capitals from the name, unique per company, editable: `key` on
+  `PUT /workspaces/{id}`, 422 / 409 `WORKSPACE_KEY_DUPLICATE` on `key`) and `workspace_task_sequence`;
+  migration `0002_pm_workspace_task_key.sql`. Sorting by code goes by number.
+- B3 notifications (above) and events `projects.comment_added`, `projects.extension_requested`,
+  `projects.extension_decided`, `projects.task_due_tomorrow`, `projects.task_overdue`; `task_due_notice`
+  (migration `0003_pm_task_due_notice.sql`) keeps the daily job to one notice per task, person and due date.
+- B4 `PATCH /lists/{id}`, `PATCH /views/{id}`: a field left out keeps its value, null clears it.
+- B5 the `project_management` template has no Gantt view. B6 HR Officer holds `projects.lists.delete`.
 

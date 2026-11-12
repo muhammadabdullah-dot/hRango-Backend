@@ -1,16 +1,17 @@
 """Project management rules for workspaces and their set-up. What a member may do inside a workspace
 (their workspace role, column permissions, organizer features) is checked by the pm procedures; the
-rules here are the ones that do not need the data: JSON shapes and custom field settings."""
+rules here are the ones that do not need the data: JSON shapes and custom field settings. PATCH on lists
+and views reads the row and merges what was sent before the usual save."""
 import json
 from datetime import date, datetime, timezone
 from typing import Any
 
 from app.core.db import Db
-from app.core.errors import invalid
+from app.core.errors import invalid, not_found
 from app.middlewares.auth import RequestContext
 from app.repos import projects_repo
-from app.schemas.projects import (ColumnPermissionIn, CustomFieldIn, FeatureIn, FolderIn, ListIn, MemberIn, StatusIn,
-                                  ViewIn, WorkspaceCreateIn, WorkspaceIn)
+from app.schemas.projects import (ColumnPermissionIn, CustomFieldIn, FeatureIn, FolderIn, ListIn, ListPatchIn, MemberIn,
+                                  StatusIn, ViewIn, ViewPatchIn, WorkspaceCreateIn, WorkspaceIn)
 
 Rows = list[dict[str, Any]]
 
@@ -67,7 +68,7 @@ def create_workspace(db: Db, ctx: RequestContext, body: WorkspaceCreateIn) -> li
 
 def save_workspace(db: Db, ctx: RequestContext, workspace_id: int, body: WorkspaceIn, row_version: bytes) -> list[Rows]:
     return projects_repo.save_workspace(db, ctx.company_id, ctx.user_id, workspace_id, body.name, body.description,
-                                        body.privacy, body.department_id, body.owner_id, row_version)
+                                        body.privacy, body.department_id, body.owner_id, row_version, body.key)
 
 
 def set_workspace_cover(db: Db, ctx: RequestContext, workspace_id: int, file_id: int | None,
@@ -207,6 +208,31 @@ def save_list(db: Db, ctx: RequestContext, list_id: int | None, workspace_id: in
                                    row_version)
 
 
+_LIST_FIELDS = ("folder_id", "name", "privacy", "color", "description", "start_at", "end_at", "priority", "sort_order")
+
+
+def patch_list(db: Db, ctx: RequestContext, list_id: int, body: ListPatchIn, row_version: bytes) -> dict[str, Any]:
+    """PATCH: the list as it is now with only the fields sent changed (null clears one), saved by the same
+    procedure as PUT, so the same rules and the row version check apply. A stale rowVersion is still refused:
+    the save compares it with the row, whatever was read here."""
+    current = projects_repo.get_list(db, ctx.company_id, ctx.user_id, list_id)
+    if current is None:
+        raise not_found("List")
+    sent = body.model_fields_set
+    if "name" in sent and body.name is None:
+        raise invalid("List name is required.", "name")
+    if "privacy" in sent and body.privacy is None:
+        raise invalid("Choose who can see this list.", "privacy")
+    values = {f: getattr(body, f) if f in sent else current[f] for f in _LIST_FIELDS}
+    for f in ("start_at", "end_at"):
+        if f in sent:
+            values[f] = naive_utc(values[f])
+    if values["start_at"] and values["end_at"] and values["end_at"] <= values["start_at"]:
+        raise invalid("End must be after the start.", "endAt")
+    member_ids = dumps(body.member_ids or []) if "member_ids" in sent else None
+    return projects_repo.save_list(db, ctx.company_id, ctx.user_id, list_id, None, values, member_ids, row_version)
+
+
 def delete_list(db: Db, ctx: RequestContext, list_id: int, row_version: bytes) -> None:
     projects_repo.delete_list(db, ctx.company_id, ctx.user_id, list_id, row_version)
 
@@ -216,6 +242,30 @@ def save_view(db: Db, ctx: RequestContext, view_id: int | None, workspace_id: in
     values = body.model_dump(by_alias=False, exclude={"config", "row_version"})
     return projects_repo.save_view(db, ctx.company_id, ctx.user_id, view_id, workspace_id, values,
                                    dumps(body.config) if body.config is not None else None, row_version)
+
+
+_VIEW_FLAGS = ("is_pinned", "is_private", "is_protected", "is_default")
+
+
+def patch_view(db: Db, ctx: RequestContext, view_id: int, body: ViewPatchIn, row_version: bytes) -> dict[str, Any]:
+    """PATCH: as patch_list, for a view. A flag sent as null is false; config null removes the settings."""
+    current = projects_repo.get_view(db, ctx.company_id, ctx.user_id, view_id)
+    if current is None:
+        raise not_found("View")
+    sent = body.model_fields_set
+    if "view_type" in sent and body.view_type is None:
+        raise invalid("Choose a view.", "viewType")
+    if "name" in sent and body.name is None:
+        raise invalid("View name is required.", "name")
+    values = {f: getattr(body, f) if f in sent else current[f] for f in ("view_type", "name", *_VIEW_FLAGS)}
+    values.update({f: bool(values[f]) for f in _VIEW_FLAGS})
+    # The procedure keeps a view's list on edit; passed for the shape only.
+    values["task_list_id"] = current["task_list_id"]
+    if "config" in sent:
+        config = dumps(body.config) if body.config is not None else None
+    else:
+        config = current["config"]
+    return projects_repo.save_view(db, ctx.company_id, ctx.user_id, view_id, None, values, config, row_version)
 
 
 def delete_view(db: Db, ctx: RequestContext, view_id: int, row_version: bytes) -> None:

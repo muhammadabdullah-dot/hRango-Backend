@@ -2,7 +2,7 @@
 reminder delivery, overdue settings and the story point penalty, the public share page, recents and dashboards,
 location fields, external storage links and the personal list. One smoke test per group, plus the public
 share limits and reminder delivery."""
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from fastapi import FastAPI
@@ -92,9 +92,11 @@ def test_docs(client, team):
     private = _doc(client, owner["headers"], wid, title="Salary notes", visibility="private")
     assert client.get(f"{API}/docs/{private['id']}", headers=manager["headers"]).status_code == 404
     assert client.get(f"{API}/docs/{private['id']}", headers=owner["headers"]).status_code == 200
-    # Not a member of a private workspace's docs: outsiders cannot write in this one.
-    assert client.post(f"{API}/workspaces/{wid}/docs", json={"title": "X", "contentHtml": ""},
-                       headers=outsider["headers"]).status_code == 403
+    # Everyone in the company works in a "workspace" workspace: a non-member writes docs there too.
+    theirs = client.post(f"{API}/workspaces/{wid}/docs", json={"title": "X", "contentHtml": ""},
+                         headers=outsider["headers"])
+    assert theirs.status_code == 201, theirs.text
+    assert theirs.json()["data"]["ownerId"] == str(outsider["employee_id"])
 
     rv = archived.json()["data"]["rowVersion"]
     assert client.delete(f"{API}/docs/{doc['id']}", params={"rowVersion": rv}, headers=manager["headers"]).status_code == 403
@@ -189,6 +191,46 @@ def test_reminder_delivery(db, client, company, team):
     projects_collab_service.deliver_due_reminders(db, company, datetime(2031, 3, 1, 9, 45))
     assert len([n for n in fe.notifications(db, company, contributor["employee_id"], "task", int(task["id"]))
                 if n["notification_type"] == "projects.reminder"]) == 1
+
+
+def test_due_and_overdue_notices(db, client, company, team):
+    """The nightly job (pm.usp_task_due_notify): assignees of open tasks due tomorrow, or overdue since at most
+    a week, are told once per due date. Dates in 2032 so no other test's tasks fall in."""
+    contributor = team["contributor"]
+    wid, h, c_id = team["ws"]["id"], team["lead"]["headers"], str(contributor["employee_id"])
+    soon = pm.task(client, h, wid, name="Due soon", dueDate="2032-03-11", assigneeIds=[c_id])
+    late = pm.task(client, h, wid, name="Slipped", dueDate="2032-03-08", assigneeIds=[c_id])
+    old = pm.task(client, h, wid, name="Long overdue", dueDate="2032-02-01", assigneeIds=[c_id])
+    nobody = pm.task(client, h, wid, name="Unassigned", dueDate="2032-03-11")
+    done = pm.task(client, h, wid, name="Finished", dueDate="2032-03-11", assigneeIds=[c_id])
+    r = client.patch(f"{API}/tasks/{done['id']}/status",
+                     json={"statusId": pm.status_id(team["ws"], "closed"), "rowVersion": done["rowVersion"]}, headers=h)
+    assert r.status_code == 200, r.text
+
+    def told(task):
+        return [(n["notification_type"], n["title"], n["link"])
+                for n in fe.notifications(db, company, contributor["employee_id"], "pm.task", int(task["id"]))
+                if n["notification_type"].startswith("projects.task_")]
+
+    assert projects_collab_service.notify_due_tasks(db, company, date(2032, 3, 10)) == 2
+    link = f"/project-management/workspaces/{wid}?task="
+    assert told(soon) == [("projects.task_due_tomorrow", f"Due tomorrow: {soon['code']} Due soon", link + soon["id"])]
+    assert told(late) == [("projects.task_overdue", f"Overdue: {late['code']} Slipped", link + late["id"])]
+    assert told(old) == [] and told(done) == [] and nobody["assignees"] == []
+    event = fe.events(db, company, "projects.task_due_tomorrow", int(soon["id"]))
+    assert len(event) == 1 and event[0]["data"]["assignees"] == [{"employeeId": c_id}]
+
+    # Run twice the same day: nothing more.
+    assert projects_collab_service.notify_due_tasks(db, company, date(2032, 3, 10)) == 0
+    assert len(told(soon)) == 1 and len(told(late)) == 1
+
+    # A due date that moves is announced again for the new date; the overdue one is not repeated.
+    fresh = client.get(f"{API}/tasks/{soon['id']}", headers=h).json()["data"]
+    r = client.put(f"{API}/tasks/{soon['id']}", json={"name": "Due soon", "dueDate": "2032-03-12",
+                                                      "rowVersion": fresh["rowVersion"]}, headers=h)
+    assert r.status_code == 200, r.text
+    assert projects_collab_service.notify_due_tasks(db, company, date(2032, 3, 11)) == 1
+    assert len(told(soon)) == 2 and len(told(late)) == 1
 
 
 # --------------------------------------------------------------------------- T5 overdue settings

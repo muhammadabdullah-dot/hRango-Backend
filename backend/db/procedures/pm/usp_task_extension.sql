@@ -2,6 +2,8 @@
 -- new due date with a reason, once per task; a workspace manager (or above) approves or rejects.
 -- Approval moves the due date and keeps the first one in original_due_date, so completing by the new
 -- date does not count as late (story points unaffected).
+-- A request tells the workspace's managers and above; a decision tells the person who asked
+-- (pm.usp_task_announce_extension).
 
 CREATE OR ALTER PROCEDURE [pm].[usp_task_extension_request]
     @company_id    BIGINT,
@@ -39,13 +41,16 @@ BEGIN
     IF (SELECT COUNT(*) FROM [pm].[task_extension] WHERE task_id = @task_id) >= @max_ext
         THROW 50409, N'newDueDate|EXTENSION_EXISTS|No more extension requests are allowed for this task.', 1;
 
-    DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
+    DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @extension_id BIGINT;
     BEGIN TRAN;
         INSERT [pm].[task_extension] (task_id, requested_by_id, old_due_date, new_due_date, reason, status, created_by)
         VALUES (@task_id, @me, @due, @new_due_date, @reason, N'pending', @actor_user_id);
+        SET @extension_id = SCOPE_IDENTITY();
         INSERT [core].[audit_log] (entity_type, entity_id, field_name, old_value, new_value, action_name, performed_by_user_id, performed_at)
         VALUES (N'pm.task', @task_id, N'due_date', CONVERT(NVARCHAR(10), @due, 23), CONVERT(NVARCHAR(10), @new_due_date, 23),
                 N'extension_request', @actor_user_id, @now);
+        EXEC [pm].[usp_task_announce_extension] @company_id = @company_id, @actor_user_id = @actor_user_id,
+             @extension_id = @extension_id;
     COMMIT;
 
     EXEC [pm].[usp_task_get] @company_id = @company_id, @actor_user_id = @actor_user_id, @id = @task_id;
@@ -98,6 +103,7 @@ BEGIN
         ELSE
             INSERT [core].[audit_log] (entity_type, entity_id, field_name, action_name, performed_by_user_id, performed_at)
             VALUES (N'pm.task', @task_id, N'due_date', N'extension_reject', @actor_user_id, @now);
+        EXEC [pm].[usp_task_announce_extension] @company_id = @company_id, @actor_user_id = @actor_user_id, @extension_id = @id;
     COMMIT;
 
     EXEC [pm].[usp_task_get] @company_id = @company_id, @actor_user_id = @actor_user_id, @id = @task_id;
