@@ -210,6 +210,24 @@ def test_punch_request_apply_and_revert(db, co):
     assert e.value.status == 422
 
 
+def test_punch_request_overnight_check_out_lands_next_morning(db, co):
+    """A missing check-out on a 22:00 - 06:00 shift is asked for on the shift's date (as Missing Punch
+    fills it in); approving it must add the punch on the next morning, where the check placed it."""
+    emp = factories.employee(db, co)
+    fa.shift(db, co, emp, MON, "22:00", "06:00")
+    fa.punch(db, co, emp, at(MON, "21:58"), "check_in")
+    fa.process(db, co, emp, MON)
+    assert "missing_punch" in fa.day(db, emp, MON)["flags"]
+
+    rq = fa.punch_request(db, co, emp, at(MON, "06:00"), "check_out")
+    db.call("att.usp_request_apply_punch", company_id=co, actor_user_id=None, request_id=rq)
+    d = fa.day(db, emp, MON)
+    assert d["last_out"] == at(MON + timedelta(days=1), "06:00") and "missing_punch" not in d["flags"]
+
+    db.call("att.usp_request_revert_punch", company_id=co, actor_user_id=None, request_id=rq)
+    assert fa.day(db, emp, MON)["last_out"] is None
+
+
 def test_relaxation_and_official_visit(db, co):
     emp = factories.employee(db, co)
     d = worked_day(db, co, emp, MON, cin="09:40")

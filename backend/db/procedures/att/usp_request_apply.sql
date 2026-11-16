@@ -65,8 +65,16 @@ BEGIN
         THROW 50400, N'punchType|The punch request has an unknown punch type.', 1;
 
     DECLARE @at DATETIME2(0) = DATEADD(SECOND, DATEDIFF(SECOND, CAST('00:00' AS TIME(0)), @time), CAST(@date AS DATETIME2(0)));
+    -- The punch date is the shift's work date. On a shift that ends the next day (22:00 - 06:00), a time
+    -- before the shift starts is the next morning's: move it there, as req.usp_request_detail_save did
+    -- when it accepted the request. Without this a 06:00 check-out lands on the morning the shift began.
+    DECLARE @shift_count INT, @shift_start DATETIME2(0), @shift_end DATETIME2(0);
+    SELECT @shift_count = COUNT(*), @shift_start = MIN(start_at), @shift_end = MIN(end_at)
+    FROM [sch].[schedule] WHERE employee_id = @employee_id AND work_date = @date;
+    IF @shift_count = 1 AND @at < @shift_start AND CAST(@shift_end AS DATE) > @date
+        SET @at = DATEADD(DAY, 1, @at);
     IF EXISTS (SELECT 1 FROM [att].[timesheet_day] WHERE employee_id = @employee_id AND is_frozen = 1
-               AND work_date BETWEEN DATEADD(DAY, -1, @date) AND @date)
+               AND work_date BETWEEN DATEADD(DAY, -1, @date) AND CAST(@at AS DATE))
         THROW 50409, N'punchDate|ATTENDANCE_FROZEN|Attendance for this date is locked: payroll has used it.', 1;
 
     BEGIN TRAN;
