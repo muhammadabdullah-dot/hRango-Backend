@@ -18,7 +18,8 @@ BEGIN
         THROW 50404, N'Task not found', 1;
 
     SELECT te.id, te.task_id, te.employee_id, NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' ') AS employee_name, te.start_at, te.end_at,
-           ISNULL(te.minutes, DATEDIFF(MINUTE, te.start_at, SYSDATETIME())) AS minutes,
+           -- A running timer's minutes so far, on the company's clock (entries are its wall-clock time).
+           ISNULL(te.minutes, DATEDIFF(MINUTE, te.start_at, [att].[fn_company_now](@company_id))) AS minutes,
            CAST(CASE WHEN te.end_at IS NULL THEN 1 ELSE 0 END AS BIT) AS is_running, te.notes, te.row_version
     FROM [pm].[time_entry] te JOIN [hr].[employee] e ON e.id = te.employee_id
     WHERE te.task_id = @task_id AND (@id IS NULL OR te.id = @id)
@@ -151,7 +152,9 @@ BEGIN
     IF EXISTS (SELECT 1 FROM [pm].[time_entry] WHERE employee_id = @me AND end_at IS NULL)
         THROW 50409, N'taskId|TIMER_RUNNING|Your timer is already running on a task. Stop it first.', 1;
 
-    INSERT [pm].[time_entry] (task_id, employee_id, start_at, created_by) VALUES (@task_id, @me, SYSDATETIME(), @actor_user_id);
+    -- Entries are the company's wall-clock time (manual ones are typed that way), not the server's clock.
+    INSERT [pm].[time_entry] (task_id, employee_id, start_at, created_by)
+    VALUES (@task_id, @me, [att].[fn_company_now](@company_id), @actor_user_id);
     DECLARE @id BIGINT = SCOPE_IDENTITY();
     EXEC [pm].[usp_time_entry_list] @company_id = @company_id, @actor_user_id = @actor_user_id, @id = @id;
 END
@@ -178,8 +181,8 @@ BEGIN
     IF LEN(@notes) > 165
         THROW 50400, N'notes|Notes must be within 165 characters.', 1;
 
-    -- Time entries are local wall-clock time (manual entries are typed that way); stamps stay UTC.
-    DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @local DATETIME2(0) = SYSDATETIME();
+    -- Time entries are the company's wall-clock time (manual entries are typed that way); stamps stay UTC.
+    DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @local DATETIME2(0) = [att].[fn_company_now](@company_id);
     BEGIN TRAN;
         UPDATE [pm].[time_entry]
         SET end_at = CASE WHEN DATEDIFF(MINUTE, start_at, @local) < 1 THEN DATEADD(MINUTE, 1, start_at) ELSE @local END,

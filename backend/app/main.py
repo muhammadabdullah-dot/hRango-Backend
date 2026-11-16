@@ -43,7 +43,9 @@ app.add_middleware(
     allow_origins=settings.cors_origin_list,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-Id"],
+    # Content-Disposition: a browser on another origin can then read a download's file name (bank files,
+    # exports); without it every file falls back to the name the screen guesses.
+    expose_headers=["X-Request-Id", "Content-Disposition"],
 )
 app.middleware("http")(request_log)
 register_error_handlers(app)

@@ -14,7 +14,12 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    SET @today = ISNULL(@today, CAST(SYSUTCDATETIME() AS DATE));
+    -- Days are the company's own (att.fn_company_now), not UTC: between midnight and 05:00 in Pakistan the
+    -- UTC date is still yesterday. Stamps (closed_at, created_at) are UTC, so they move by the company's
+    -- offset, rounded to 15 minutes, before they are compared with a day.
+    DECLARE @local_now DATETIME2(0) = [att].[fn_company_now](@company_id);
+    DECLARE @utc_offset INT = CAST(ROUND(DATEDIFF(SECOND, SYSUTCDATETIME(), @local_now) / 900.0, 0) AS INT) * 15;
+    SET @today = ISNULL(@today, CAST(@local_now AS DATE));
     DECLARE @me BIGINT = (SELECT employee_id FROM [auth].[user_account] WHERE id = @actor_user_id);
 
     EXEC [pm].[usp_recent_list] @company_id = @company_id, @actor_user_id = @actor_user_id, @limit = 8;
@@ -70,9 +75,9 @@ BEGIN
         SELECT DATEADD(DAY, 1, d) FROM days WHERE d < @today
     )
     SELECT days.d AS [date],
-           (SELECT COUNT(*) FROM #mine m WHERE CAST(m.closed_at AS DATE) = days.d) AS completed,
+           (SELECT COUNT(*) FROM #mine m WHERE CAST(DATEADD(MINUTE, @utc_offset, m.closed_at) AS DATE) = days.d) AS completed,
            (SELECT COUNT(*) FROM [pm].[task_assignee] x JOIN #mine m ON m.task_id = x.task_id
-            WHERE x.employee_id = @me AND CAST(x.created_at AS DATE) = days.d) AS assigned
+            WHERE x.employee_id = @me AND CAST(DATEADD(MINUTE, @utc_offset, x.created_at) AS DATE) = days.d) AS assigned
     FROM days
     ORDER BY days.d
     OPTION (MAXRECURSION 20);
@@ -102,7 +107,10 @@ BEGIN
     ELSE IF NOT EXISTS (SELECT 1 FROM [pm].[fn_workspace_access](@company_id, @actor_user_id) WHERE workspace_id = @workspace_id)
         THROW 50404, N'Workspace not found', 1;
 
-    SET @today = ISNULL(@today, CAST(SYSUTCDATETIME() AS DATE));
+    -- The company's own day, and its UTC offset for the closed_at stamps (see usp_dashboard_home).
+    DECLARE @local_now DATETIME2(0) = [att].[fn_company_now](@company_id);
+    DECLARE @utc_offset INT = CAST(ROUND(DATEDIFF(SECOND, SYSUTCDATETIME(), @local_now) / 900.0, 0) AS INT) * 15;
+    SET @today = ISNULL(@today, CAST(@local_now AS DATE));
     DECLARE @week_start DATE = DATEADD(DAY, -(DATEDIFF(DAY, '19000107', @today) % 7), @today);   -- 1900-01-07 was a Sunday
     DECLARE @week_end DATE = DATEADD(DAY, 6, @week_start);
     DECLARE @me BIGINT = (SELECT employee_id FROM [auth].[user_account] WHERE id = @actor_user_id);
@@ -133,7 +141,7 @@ BEGIN
 
     SELECT (SELECT COUNT(*) FROM #t WHERE is_open = 1 AND due_date BETWEEN @today AND @week_end) AS due_this_week,
            (SELECT COUNT(*) FROM #t WHERE is_open = 1 AND due_date < @today) AS overdue,
-           (SELECT COUNT(*) FROM #t WHERE is_open = 0 AND closed_at >= @week_start) AS completed_this_week,
+           (SELECT COUNT(*) FROM #t WHERE is_open = 0 AND DATEADD(MINUTE, @utc_offset, closed_at) >= @week_start) AS completed_this_week,
            (SELECT COUNT(*) FROM #t t WHERE t.is_open = 1 AND NOT EXISTS (SELECT 1 FROM [pm].[task_assignee] x WHERE x.task_id = t.id)) AS unassigned;
 
     SELECT TOP 6 d.id, d.workspace_id, d.title, d.folder_id, d.task_list_id AS list_id,

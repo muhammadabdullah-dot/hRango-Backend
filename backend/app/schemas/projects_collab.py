@@ -228,8 +228,9 @@ class ShareMemberOut(ApiModel):
 
 
 class ShareOut(ApiModel):
-    """The saved settings, or the defaults (id null) when the item has not been shared yet."""
-    __local_times__ = frozenset({'valid_from', 'valid_to'})  # wall-clock, no zone
+    """The saved settings, or the defaults (id null) when the item has not been shared yet.
+    valid_from / valid_to are UTC instants (ShareIn takes them with a zone and pm.usp_public_share_check
+    compares them with SYSUTCDATETIME()), so they go out stamped "Z" like any server time."""
     id: str | None
     entity_type: str
     entity_id: str
