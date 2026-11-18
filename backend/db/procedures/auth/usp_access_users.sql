@@ -134,8 +134,12 @@ BEGIN
         IF @id = @actor_user_id AND @is_active = 0
             THROW 50403, N'isActive|You cannot switch off your own account.', 1;
         -- Relinking one's own account to another employee would make every "own" permission read that
-        -- person's salary, bank details and payslips (BE-04 b).
+        -- person's salary, bank details and payslips (BE-04 b). One exception: the Account Owner, who already
+        -- holds everything, may link an account that has no employee yet to their own record (a first
+        -- install, where the administrator exists before their employee record does).
         IF @id = @actor_user_id AND EXISTS (SELECT @employee_id EXCEPT SELECT @old_employee)
+           AND NOT (@old_employee IS NULL
+                    AND EXISTS (SELECT 1 FROM [auth].[user_account] WHERE id = @id AND is_account_owner = 1))
             THROW 50403, N'employeeId|You cannot change the employee your own account is linked to.', 1;
         IF EXISTS (SELECT 1 FROM [auth].[fn_access_not_home](@company_id, @id))
            AND EXISTS (SELECT @email, @display_name, @employee_id, @is_active

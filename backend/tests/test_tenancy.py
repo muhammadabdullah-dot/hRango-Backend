@@ -246,3 +246,24 @@ def test_only_the_home_company_changes_a_sign_in(client, db):
     home_admin = factories.login_as(db, client, home, role_codes="company_admin")
     assert client.put(f"/api/access/users/{person_id}/password", headers=home_admin["headers"],
                       json={"password": "Reset@2026"}).status_code == 204
+
+
+def test_an_unlinked_admin_may_not_link_themselves_but_the_account_owner_may(client, db):
+    company = factories.company(db)
+    someone = factories.employee(db, company, first_name="Owner")
+    admin = factories.login_as(db, client, company, role_codes="company_admin")  # no employee yet
+    mine = client.get(f"/api/access/users/{admin['user_id']}", headers=admin["headers"]).json()["data"]
+    body = {"email": mine["email"], "displayName": "Admin", "employeeId": str(someone), "rowVersion": mine["rowVersion"]}
+    refused = client.put(f"/api/access/users/{admin['user_id']}", headers=admin["headers"], json=body)
+    assert refused.status_code == 403 and "employeeId" in refused.json()["fieldErrors"]
+
+    # A first install: the Account Owner links their account to their own new employee record, once.
+    _execute(db, "UPDATE auth.user_account SET is_account_owner = 1 WHERE id = ?", admin["user_id"])
+    fresh = client.get(f"/api/access/users/{admin['user_id']}", headers=admin["headers"]).json()["data"]
+    linked = client.put(f"/api/access/users/{admin['user_id']}", headers=admin["headers"],
+                        json={**body, "rowVersion": fresh["rowVersion"]})
+    assert linked.status_code == 200, linked.text
+    other = factories.employee(db, company, first_name="Victim")
+    again = client.put(f"/api/access/users/{admin['user_id']}", headers=admin["headers"], json={
+        **body, "employeeId": str(other), "rowVersion": linked.json()["data"]["rowVersion"]})
+    assert again.status_code == 403 and "employeeId" in again.json()["fieldErrors"]
