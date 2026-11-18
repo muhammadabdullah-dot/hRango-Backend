@@ -130,9 +130,17 @@ BEGIN
         IF @old_rv <> @row_version
             THROW 50409, N'Someone else changed this user. Reload it and try again', 1;
         IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @id, @actor_user_id))
-            THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
+            THROW 50403, N'user|ACCOUNT_PROTECTED|This account holds access you do not hold yourself, or belongs to an administrator or the Account Owner.', 1;
         IF @id = @actor_user_id AND @is_active = 0
             THROW 50403, N'isActive|You cannot switch off your own account.', 1;
+        -- Relinking one's own account to another employee would make every "own" permission read that
+        -- person's salary, bank details and payslips (BE-04 b).
+        IF @id = @actor_user_id AND EXISTS (SELECT @employee_id EXCEPT SELECT @old_employee)
+            THROW 50403, N'employeeId|You cannot change the employee your own account is linked to.', 1;
+        IF EXISTS (SELECT 1 FROM [auth].[fn_access_not_home](@company_id, @id))
+           AND EXISTS (SELECT @email, @display_name, @employee_id, @is_active
+                       EXCEPT SELECT @old_email, @old_display, @old_employee, @old_active)
+            THROW 50403, N'user|ACCOUNT_HOME_ONLY|Only an administrator of this user''s home company can change their sign-in details.', 1;
     END
     ELSE IF @password_hash IS NULL
         THROW 50400, N'password|A password is required for a new user.', 1;
@@ -334,7 +342,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM [auth].[fn_access_company_users](@company_id) cu WHERE cu.id = @id)
         THROW 50404, N'User not found', 1;
     IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @id, @actor_user_id))
-        THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
+        THROW 50403, N'user|ACCOUNT_PROTECTED|This account holds access you do not hold yourself, or belongs to an administrator or the Account Owner.', 1;
+    IF EXISTS (SELECT 1 FROM [auth].[fn_access_not_home](@company_id, @id))
+        THROW 50403, N'user|ACCOUNT_HOME_ONLY|Only an administrator of this user''s home company can change their sign-in details.', 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;

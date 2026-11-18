@@ -53,7 +53,7 @@ class DeliveryOut(ApiModel):
     next_attempt_at: datetime | None
     last_attempt_at: datetime | None
     response_code: int | None
-    response_body: str | None
+    # No response body: the receiver's reply is not kept (BE-03). `error` is a short, fixed phrase.
     error: str | None
     event_id: str
     event_type: str

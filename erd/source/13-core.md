@@ -63,9 +63,26 @@ webhook_delivery                      one event to one webhook, retried with bac
   next_attempt_at
   last_attempt_at
   response_code     {INT}
-  response_body     {NVARCHAR(2000)}
+  response_body     {NVARCHAR(2000)}  no longer written (BE-03): the receiver's reply is not kept
   error             {NVARCHAR(1000)}
   UNIQUE (webhook_id, outbox_event_id)
+
+mail_message                          one outgoing e-mail, sent by the worker and retried; the body is cleared once sent or given up
+  id                PK
+  company_id        FK company        NULL for platform mail
+  kind                                password_reset, invite, ...
+  to_address        {NN}
+  to_name
+  subject           {NVARCHAR(300) NN}
+  body_html         {NVARCHAR(MAX)}
+  body_text         {NVARCHAR(MAX)}
+  status                              queued, sent, failed, disabled
+  attempts          {INT NN}
+  next_attempt_at
+  last_attempt_at
+  sent_at
+  error             {NVARCHAR(1000)}
+  INDEX (status, next_attempt_at)
 ```
 
 ```

@@ -179,7 +179,7 @@ def bootstrap_company(cur: pyodbc.Cursor, company: str, admin_email: str) -> Non
     password = os.environ.get("HRANGO_ADMIN_PASSWORD") or getpass.getpass(f"Password for {admin_email}: ")
     if len(password) < 8:
         sys.exit("The administrator password must be at least 8 characters.")
-    company_id = cur.execute("EXEC org.usp_company_provision @name = ?", company).fetchval()
+    company_id = cur.execute("EXEC org.usp_company_provision @name = ?, @reuse = 1", company).fetchval()
     cur.execute("EXEC auth.usp_role_defaults_apply @company_id = ?, @roles = ?", company_id, roles_json()).fetchall()
     cur.execute("EXEC auth.usp_user_provision @company_id = ?, @email = ?, @password_hash = ?, @display_name = ?, "
                 "@is_account_owner = 1, @role_codes = ?", company_id, admin_email, hash_password(password),

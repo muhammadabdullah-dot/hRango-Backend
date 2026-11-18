@@ -1,11 +1,13 @@
-"""Routes that work without signing in (shared project links). Each one checks its own token; there is no
-auth dependency here. 404 SHARE_NOT_FOUND, 410 SHARE_EXPIRED / SHARE_EXHAUSTED."""
-from fastapi import APIRouter, Depends, Path
+"""Routes that work without signing in: shared project links (each checks its own token; 404 SHARE_NOT_FOUND,
+410 SHARE_EXPIRED / SHARE_EXHAUSTED), and self-service sign-up with the plans on offer."""
+from fastapi import APIRouter, Depends, Path, Request, status
 
 from app.controllers import public_controller as c
 from app.core.db import Db, get_db
+from app.core.errors import invalid
 from app.schemas.common import Item
-from app.schemas.public import PublicShareOut, PublicTaskOut
+from app.schemas.public import PublicPlanOut, PublicShareOut, PublicTaskOut, SignUpIn, SignUpOut
+from app.services import signup_service
 
 router = APIRouter(prefix="/public", tags=["public"])
 REFUSED = {404: {"description": "SHARE_NOT_FOUND"}, 410: {"description": "SHARE_EXPIRED or SHARE_EXHAUSTED"}}
@@ -19,3 +21,22 @@ def open_share(token: str = Path(min_length=8, max_length=100), db: Db = Depends
 @router.get("/shares/{token}/tasks/{task_id}", response_model=Item[PublicTaskOut], responses=REFUSED)
 def share_task(task_id: int, token: str = Path(min_length=8, max_length=100), db: Db = Depends(get_db)) -> dict:
     return c.share_task(db, token, task_id)
+
+
+# ---------------------------------------------------------------- self-service sign-up (roadmap 1.1)
+
+@router.get("/plans", response_model=Item[list[PublicPlanOut]])
+def list_plans(db: Db = Depends(get_db)) -> dict:
+    """The plans on offer, for the sign-up page."""
+    return {"data": [PublicPlanOut(**row) for row in signup_service.public_plans(db)]}
+
+
+@router.post("/signup", response_model=Item[SignUpOut], status_code=status.HTTP_202_ACCEPTED)
+def sign_up(body: SignUpIn, request: Request, db: Db = Depends(get_db)) -> dict:
+    """Creates an organisation on a 14-day trial and e-mails its owner a link to choose a password. The same
+    answer when the e-mail already has an account (that person is told by e-mail instead).
+    503 SIGNUP_UNAVAILABLE without e-mail; 429 after too many attempts."""
+    if not body.accept_terms:
+        raise invalid("Agree to the Terms of Service and Privacy Policy to continue.", "acceptTerms")
+    signup_service.sign_up(db, body.model_dump(by_alias=False), request.client.host if request.client else None)
+    return {"data": SignUpOut(message=signup_service.ANSWER)}

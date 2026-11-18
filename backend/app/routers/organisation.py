@@ -11,7 +11,7 @@ from app.schemas.common import Item, Paginated
 from app.schemas.organisation import (AnnouncementIn, AnnouncementOut, AreaIn, AreaOut, BranchIn, BranchOut, CityOut,
                                       CompanyIn, CompanyLogoIn, CompanyOut, CompanyRef, CountryOut, DepartmentIn, DepartmentOut,
                                       JobTitleIn, JobTitleOut, LocationIn, LocationOut, LookupItem, MasterIn,
-                                      MasterOut, StateOut)
+                                      MasterOut, PlanUsageOut, StateOut)
 
 router = APIRouter(prefix="/organisation", tags=["organisation"])
 NO_CONTENT = status.HTTP_204_NO_CONTENT
@@ -61,6 +61,13 @@ def delete_department(department_id: int, row_version: str | None = Query(None, 
 @router.get("/general", response_model=Item[CompanyOut])
 def get_general(db: Db = Depends(get_db), ctx: RequestContext = Depends(require("organisation.general.view"))) -> dict:
     return c.get_general(db, ctx)
+
+
+@router.get("/plan", response_model=Item[PlanUsageOut | None])
+def get_plan(db: Db = Depends(get_db), ctx: RequestContext = Depends(require("organisation.general.view"))) -> dict:
+    """The organisation's plan and how many of its employees it uses, across all its companies."""
+    row = db.call_one("plat.usp_plan_usage", company_id=ctx.company_id)
+    return {"data": PlanUsageOut(**row) if row else None}
 
 
 @router.put("/general", response_model=Item[CompanyOut])

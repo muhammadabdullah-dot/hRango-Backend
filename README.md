@@ -15,7 +15,7 @@ Quick start (Windows, SQL Server, Python 3.14):
 cd backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-copy .env.example .env        (set DB_URL and JWT_SECRET)
+copy .env.example .env        (set DB_URL, JWT_SECRET and FILE_LINK_SECRET; see the comments in it)
 .venv\Scripts\python.exe -m scripts.seed --create --bootstrap --company "Your Company" --admin-email admin@example.com
 run.bat
 ```

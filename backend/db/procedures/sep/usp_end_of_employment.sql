@@ -571,6 +571,8 @@ BEGIN
         THROW 50400, N'joiningDate|Joining date is required.', 1;
     IF @joining_date <= @lwd
         THROW 50400, N'joiningDate|The joining date must be after the last working date.', 1;
+    -- A rehire counts against the organisation's plan again (roadmap 1.3).
+    EXEC [plat].[usp_plan_employee_check] @company_id = @company_id, @adding = 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;

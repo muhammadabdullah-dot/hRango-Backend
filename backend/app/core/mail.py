@@ -1,7 +1,120 @@
-"""Outgoing mail. Not set up yet (settings.mail_enabled is false): callers record what would be sent
-and report the status "disabled". The SMTP sender will live here."""
+"""Outgoing mail (roadmap 1.4).
+
+Callers queue a message (`queue`); the worker (the API's background thread or scripts/webhooks.py, see
+app/services/webhook_dispatcher.py) sends what is due (`deliver_due`) and retries failures. Nothing is sent
+inside a web request, so a slow mail server never slows the app.
+
+Two backends (settings.mail_backend):
+- smtp: any provider (Amazon SES, SendGrid, Mailgun, Microsoft 365 and Gmail all speak SMTP), STARTTLS on
+  587 or TLS on 465.
+- file: each message is written as an .eml file to settings.mail_file_dir (development and tests).
+
+With mail off (settings.mail_enabled false) a message is recorded as "disabled" and never sent.
+"""
+import logging
+import smtplib
+import ssl
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.message import EmailMessage
+from email.utils import formataddr, format_datetime, make_msgid, parseaddr
+from pathlib import Path
+
 from app.core.config import settings
+from app.core.db import Db
+
+log = logging.getLogger("hrango")
 
 
 def enabled() -> bool:
     return settings.mail_enabled
+
+
+@dataclass
+class Message:
+    to_address: str
+    subject: str
+    body_html: str
+    body_text: str | None = None
+    to_name: str | None = None
+    id: int | None = None
+
+
+def queue(db: Db, *, kind: str, to_address: str, subject: str, body_html: str, body_text: str | None = None,
+          to_name: str | None = None, company_id: int | None = None, actor_id: int | None = None) -> dict:
+    """Records a message for the worker to send: {"id", "status"} with status "queued", or "disabled" when
+    mail is off."""
+    return db.call_one("core.usp_mail_queue", company_id=company_id, kind=kind, to_address=to_address,
+                       to_name=to_name, subject=subject, body_html=body_html, body_text=body_text,
+                       status="queued" if enabled() else "disabled", actor_id=actor_id)
+
+
+def build(message: Message) -> EmailMessage:
+    mail = EmailMessage()
+    sender_name, sender_address = parseaddr(settings.mail_from)
+    mail["From"] = formataddr((sender_name, sender_address)) if sender_name else sender_address
+    mail["To"] = formataddr((message.to_name, message.to_address)) if message.to_name else message.to_address
+    if settings.mail_reply_to:
+        mail["Reply-To"] = settings.mail_reply_to
+    mail["Subject"] = message.subject
+    mail["Date"] = format_datetime(datetime.now(UTC))
+    mail["Message-ID"] = make_msgid(domain=(sender_address.split("@", 1)[-1] or "hrango.local"))
+    # Transactional mail: tell auto-responders not to answer.
+    mail["Auto-Submitted"] = "auto-generated"
+    mail.set_content(message.body_text or "Open this message in a mail program that shows HTML.")
+    mail.add_alternative(message.body_html, subtype="html")
+    return mail
+
+
+def send(message: Message) -> None:
+    """Sends one message now through the configured backend; raises on failure."""
+    mail = build(message)
+    if settings.mail_backend == "file":
+        folder = Path(settings.mail_file_dir or Path(__file__).resolve().parents[2] / "mail-outbox")
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        (folder / f"{stamp}-{message.id or uuid.uuid4().hex[:8]}.eml").write_bytes(bytes(mail))
+        return
+    context = ssl.create_default_context()
+    timeout = settings.smtp_timeout_seconds
+    if settings.smtp_ssl:
+        server: smtplib.SMTP = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=timeout, context=context)
+    else:
+        server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=timeout)
+    with server:
+        server.ehlo()
+        if settings.smtp_starttls and not settings.smtp_ssl:
+            server.starttls(context=context)
+            server.ehlo()
+        if settings.smtp_username:
+            server.login(settings.smtp_username, settings.smtp_password)
+        server.send_message(mail)
+
+
+def _error_text(exc: Exception) -> str:
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "The mail server refused the recipient address."
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return "The mail server refused the sign-in (check SMTP_USERNAME and SMTP_PASSWORD)."
+    if isinstance(exc, smtplib.SMTPResponseException):
+        return f"The mail server answered {exc.smtp_code}."
+    if isinstance(exc, (TimeoutError, OSError)):
+        return "The mail server could not be reached."
+    return type(exc).__name__
+
+
+def deliver_due(db: Db, batch: int = 20) -> int:
+    """Sends what is due now; returns how many were attempted. Does nothing while mail is off."""
+    if not enabled():
+        return 0
+    rows = db.call("core.usp_mail_due", batch=batch)
+    for row in rows:
+        try:
+            send(Message(id=row["id"], to_address=row["to_address"], to_name=row["to_name"], subject=row["subject"],
+                         body_html=row["body_html"] or "", body_text=row["body_text"]))
+            db.call("core.usp_mail_result", id=row["id"], ok=True, error=None)
+        except Exception as exc:  # noqa: BLE001 - every failure is recorded and retried
+            log.warning("mail %s to %s failed: %s", row["id"], row["to_address"], exc)
+            db.call("core.usp_mail_result", id=row["id"], ok=False, error=_error_text(exc))
+    return len(rows)

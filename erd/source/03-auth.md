@@ -50,6 +50,16 @@ user_company                          which companies a user may see
 
 user_session                          one sign-in; the token names it, so ending it signs that device out
   id PK, user_account_id FK user_account, company_id FK company, refresh_token_hash, device, ip_address, last_seen_at, expires_at, revoked_at
+
+user_token                            a one-time e-mail link: password_reset (1 hour) or invite (7 days); only the SHA-256 is kept
+  id PK, user_account_id FK user_account, purpose {NN}, token_hash {CHAR(64)} {NN}, expires_at {NN}, used_at
+  UNIQUE (token_hash)
+
+login_attempt                         one checked password (customer or staff realm), for the sign-in limits; kept a day
+  id PK, realm {NN}, email {NN}, ip_address, succeeded {BIT} {NN}, attempted_at {NN}
+  INDEX (realm, email, attempted_at)
+  INDEX (realm, ip_address, attempted_at)
+  INDEX (attempted_at)
 ```
 
 ```

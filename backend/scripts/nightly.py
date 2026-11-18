@@ -33,12 +33,14 @@ JOBS = (
 
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
-    today = date.today()
     conn = pyodbc.connect(settings.db_url, autocommit=True)
     cur = conn.cursor()
-    companies = cur.execute("SELECT id, name FROM org.company ORDER BY id").fetchall()
+    # Companies of a suspended or cancelled organisation get no jobs (roadmap 0.3); their data stays as it was.
+    companies = cur.execute("SELECT id, name FROM org.company WHERE plat.fn_company_blocked(id) = 0 ORDER BY id").fetchall()
     failed = 0
     for company_id, name in companies:
+        # "Today" is the company's own date, not this server's (a company in Dubai or London).
+        today = cur.execute("SELECT CAST(att.fn_company_now(?) AS DATE)", company_id).fetchval() or date.today()
         for job, sql, what in JOBS:
             params = (company_id, today - timedelta(days=1), today) if job == "attendance" else (company_id,)
             try:

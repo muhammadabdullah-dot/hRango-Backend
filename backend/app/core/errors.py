@@ -7,12 +7,15 @@ show the message under the right input.
 
 
 class AppError(Exception):
-    def __init__(self, status: int, code: str, message: str, field_errors: dict[str, str] | None = None):
+    def __init__(self, status: int, code: str, message: str, field_errors: dict[str, str] | None = None,
+                 headers: dict[str, str] | None = None):
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.field_errors = field_errors or {}
+        # Response headers that go with the error, e.g. Retry-After on 429.
+        self.headers = headers or {}
 
 
 def not_found(what: str) -> AppError:

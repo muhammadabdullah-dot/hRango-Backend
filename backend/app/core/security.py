@@ -37,6 +37,26 @@ def verify_password(password: str, stored: str | None) -> bool:
         return False
 
 
+def password_problem(password: str) -> str | None:
+    """Why a new customer password is not acceptable, or None. One rule for every place a password is set."""
+    if len(password) < 8 or not any(ch.isalpha() for ch in password) or not any(ch.isdigit() for ch in password):
+        return "Use at least 8 characters with letters and digits."
+    return None
+
+
+# Checked against when the email has no account, so an unknown email costs the same scrypt work as a
+# wrong password and the response time does not reveal which emails exist (BE-07).
+_DUMMY_HASH = hash_password(secrets.token_urlsafe(24))
+
+
+def password_matches(password: str, stored: str | None) -> bool:
+    """verify_password that takes as long for a missing account (stored None) as for a real one."""
+    if stored is None:
+        verify_password(password, _DUMMY_HASH)
+        return False
+    return verify_password(password, stored)
+
+
 def token_expiry() -> datetime:
     return datetime.now(UTC).replace(microsecond=0) + timedelta(hours=settings.token_hours)
 

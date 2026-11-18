@@ -100,7 +100,14 @@ BEGIN
         THROW 50400, N'countryId|Country not found.', 1;
     IF @fiscal_year_start_month IS NULL OR @fiscal_year_start_month NOT BETWEEN 1 AND 12
         THROW 50400, N'fiscalYearStartMonth|Select a month from 1 to 12.', 1;
-    IF EXISTS (SELECT 1 FROM [org].[company] WHERE name = @name AND (@id IS NULL OR id <> @id))
+    -- Names are unique within one organisation (plat.customer), not across every customer of the platform,
+    -- so a 409 never tells one customer what another has named its companies (BE-06 d). Companies outside
+    -- any organisation (development databases) are compared with each other.
+    DECLARE @customer_id BIGINT = (SELECT customer_id FROM [plat].[customer_company] WHERE company_id = ISNULL(@id, @company_id));
+    IF EXISTS (SELECT 1 FROM [org].[company] c
+               LEFT JOIN [plat].[customer_company] cc ON cc.company_id = c.id
+               WHERE c.name = @name AND (@id IS NULL OR c.id <> @id)
+                 AND (cc.customer_id = @customer_id OR (cc.customer_id IS NULL AND @customer_id IS NULL)))
         THROW 50409, N'organizationName|COMPANY_DUPLICATE|A company with this name already exists.', 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
@@ -113,6 +120,12 @@ BEGIN
             VALUES (@name, @legal_name, @email, @phone, @website, @address, @country_id, @currency, @timezone,
                     @date_format, @week_start_day, @fiscal_year_start_month, 1, @actor_user_id);
             SET @id = SCOPE_IDENTITY();
+
+            -- The new company belongs to the same organisation as the company it was created from, so the
+            -- organisation's plan, limits, billing and suspension cover it too (roadmap 0.4).
+            INSERT [plat].[customer_company] (customer_id, company_id, created_by)
+            SELECT @customer_id, @id, @actor_user_id
+            WHERE @customer_id IS NOT NULL;
 
             EXEC [org].[usp_company_defaults_apply] @company_id = @id;
 
@@ -142,6 +155,10 @@ BEGIN
                    OR EXISTS (SELECT 1 FROM [auth].[user_account] u WHERE u.id = @actor_user_id AND u.company_id = @id)
                    OR EXISTS (SELECT 1 FROM [auth].[user_company] uc WHERE uc.user_account_id = @actor_user_id AND uc.company_id = @id))
             THROW 50404, N'Company not found', 1;
+        -- Editing another company needs the edit permission in that company, not only in the active one (BE-06 c).
+        IF @id <> @company_id
+           AND NOT EXISTS (SELECT 1 FROM [auth].[fn_effective_grants](@id, @actor_user_id) WHERE code = N'organisation.companies.edit')
+            THROW 50403, N'You may not change that company''s settings.', 1;
         IF @o_rv <> @row_version
             THROW 50409, N'Someone else changed these settings. Reload them and try again', 1;
 

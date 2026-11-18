@@ -3,7 +3,7 @@
 ```
 company                               one legal entity; a customer database holds several (e.g. a Pakistani company and a Dubai FZ-LLC)
   id                PK
-  name                                organisation name shown in the app (General Settings)
+  name                                organisation name shown in the app (General Settings); unique within one organisation (plat.customer_company), checked in org.usp_company_save
   legal_name                          registered name
   logo_file_id      FK stored_file
   email, phone, website, address      contact details
@@ -14,7 +14,7 @@ company                               one legal entity; a customer database hold
   week_start_day                      monday, saturday, sunday
   fiscal_year_start_month             1 to 12; 7 (July) in Pakistan
   is_active
-  UNIQUE (name)
+  INDEX (name)
 
 country                               ISO 3166-1
   id PK, name, iso_code {CHAR(2)} {NN}

@@ -3,7 +3,8 @@ import json
 import secrets
 from typing import Any
 
-from app.core import events
+from app.core import events, outbound
+from app.core.config import settings
 from app.core.db import Db
 from app.core.errors import AppError
 from app.middlewares.auth import RequestContext
@@ -25,6 +26,17 @@ def _events_json(chosen: list[str]) -> str:
     return json.dumps(cleaned)
 
 
+def _checked_url(url: str) -> str:
+    """The address, once it is known to be a public http(s) endpoint (https in production). The dispatcher
+    checks again on every delivery, because a host name can later point somewhere else (BE-03)."""
+    url = url.strip()
+    try:
+        outbound.check_url(url, require_https=settings.is_production)
+    except outbound.BlockedAddress as exc:
+        raise AppError(422, "VALIDATION_FAILED", str(exc), {"url": str(exc)}) from exc
+    return url
+
+
 def list_webhooks(db: Db, ctx: RequestContext, page: int, page_size: int) -> tuple[int, list[dict[str, Any]]]:
     return integrations_repo.list_webhooks(db, ctx.company_id, page, page_size)
 
@@ -35,13 +47,13 @@ def get_webhook(db: Db, ctx: RequestContext, webhook_id: int) -> dict[str, Any]:
 
 def create_webhook(db: Db, ctx: RequestContext, name: str, url: str, chosen: list[str],
                    is_active: bool) -> dict[str, Any]:
-    return integrations_repo.save_webhook(db, ctx.company_id, ctx.user_id, None, name, url.strip(),
+    return integrations_repo.save_webhook(db, ctx.company_id, ctx.user_id, None, name, _checked_url(url),
                                           _events_json(chosen), is_active, new_secret(), None)
 
 
 def update_webhook(db: Db, ctx: RequestContext, webhook_id: int, name: str, url: str, chosen: list[str],
                    is_active: bool, row_version: bytes) -> dict[str, Any]:
-    return integrations_repo.save_webhook(db, ctx.company_id, ctx.user_id, webhook_id, name, url.strip(),
+    return integrations_repo.save_webhook(db, ctx.company_id, ctx.user_id, webhook_id, name, _checked_url(url),
                                           _events_json(chosen), is_active, None, row_version)
 
 

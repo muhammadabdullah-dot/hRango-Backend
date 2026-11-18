@@ -274,3 +274,15 @@ class AnnouncementOut(ApiModel):
     created_at: datetime
     updated_at: datetime | None
     row_version: str
+
+
+class PlanUsageOut(ApiModel):
+    """The organisation's plan and what it uses of it (Settings > Subscription). Null when the company is not
+    part of a platform organisation (development databases)."""
+    plan_id: str | None
+    plan_name: str | None
+    # None = no employee limit
+    employee_limit: int | None
+    employees_used: int
+    subscription_status: str | None
+    company_count: int

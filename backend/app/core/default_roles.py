@@ -108,7 +108,9 @@ ROLES = [
      "grants": [("*", "company")], "exclude": []},
     {"code": "hr_manager", "name": "HR Manager",
      "description": "All HR modules for the whole company. No user or role administration.",
-     "grants": [("*", "company")], "exclude": ["access.*", "integrations.*"]},
+     # No new companies: the creator becomes that company's administrator, with users, roles and webhooks
+     # (BE-06 b). Company Administrators and the Account Owner add companies.
+     "grants": [("*", "company")], "exclude": ["access.*", "integrations.*", "organisation.companies.create"]},
     {"code": "hr_officer", "name": "HR Officer",
      "description": "Day-to-day HR work for the whole company: no settings, deletes, payroll, salaries or budgets.",
      "grants": [("*", "company")],

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import Field
 
 from app.schemas.common import ApiModel
@@ -31,3 +33,33 @@ class AuthUser(ApiModel):
 class AuthSession(ApiModel):
     token: str
     user: AuthUser
+
+
+# ---------------------------------------------------------------- e-mail links (forgot password, invitations)
+
+class ForgotPasswordIn(ApiModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class TokenIn(ApiModel):
+    """The token from the link's #token= part."""
+    token: str = Field(min_length=20, max_length=200)
+
+
+class SetPasswordIn(TokenIn):
+    password: str = Field(min_length=8, max_length=200)
+
+
+class LinkOut(ApiModel):
+    purpose: str  # password_reset or invite
+    email: str
+    company_name: str | None
+    expires_at: datetime
+
+
+class AcceptedOut(ApiModel):
+    email: str
+
+
+class MessageOut(ApiModel):
+    message: str

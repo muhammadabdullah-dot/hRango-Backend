@@ -171,6 +171,10 @@ BEGIN
     JOIN [pm].[workspace] w ON w.id = r.workspace_id
     WHERE r.notified_at IS NULL
       AND (@company_id IS NULL OR w.company_id = @company_id)
+      -- Not for a suspended or cancelled organisation; they go out once it is active again.
+      AND NOT EXISTS (SELECT 1 FROM [plat].[customer_company] cc
+                      JOIN [plat].[customer] c ON c.id = cc.customer_id AND c.status <> N'active'
+                      WHERE cc.company_id = w.company_id)
       AND DATEADD(MINUTE, -ISNULL(r.notify_before_minutes, 0), r.remind_at) <= ISNULL(@now, [att].[fn_company_now](w.company_id))
     ORDER BY r.remind_at, r.id;
 

@@ -1,6 +1,9 @@
 """Pages that work without signing in: the public share page of a task, list or workspace (Backend
 Dependencies T6). Only the properties the link shows are filled; the others are null."""
 from datetime import date, datetime
+from decimal import Decimal
+
+from pydantic import Field
 
 from app.schemas.common import ApiModel
 
@@ -80,3 +83,32 @@ class PublicTaskOut(PublicTaskRowOut):
     comments: list[PublicCommentOut] | None = None
     attachments: list[PublicAttachmentOut] | None = None
     custom_fields: list[PublicFieldOut] | None = None
+
+
+# ---------------------------------------------------------------- self-service sign-up (roadmap 1.1)
+
+class PublicPlanOut(ApiModel):
+    id: str
+    name: str
+    description: str | None
+    price_monthly: Decimal
+    price_annual: Decimal
+    # None = no employee limit
+    employee_limit: int | None
+
+
+class SignUpIn(ApiModel):
+    company_name: str = Field(min_length=2, max_length=200)
+    owner_name: str = Field(min_length=2, max_length=200)
+    owner_email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    contact_phone: str | None = Field(None, max_length=50)
+    country: str | None = Field(None, max_length=100)
+    currency: str | None = Field(None, pattern=r"^[A-Z]{3}$")
+    timezone: str | None = Field(None, max_length=64, pattern=r"^(UTC|[A-Z][A-Za-z]+(/[A-Za-z0-9_+\-]+){1,2})$")
+    plan_id: int | None = None
+    # The visitor ticked "I agree to the Terms of Service and Privacy Policy".
+    accept_terms: bool
+
+
+class SignUpOut(ApiModel):
+    message: str

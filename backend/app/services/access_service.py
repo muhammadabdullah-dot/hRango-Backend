@@ -8,7 +8,7 @@ from typing import Any
 from app.core.db import Db
 from app.core.errors import AppError, forbidden, invalid
 from app.core.permissions import CODES
-from app.core.security import hash_password, verify_password
+from app.core.security import hash_password, password_problem, verify_password
 from app.middlewares.auth import RequestContext
 from app.repos import access_repo, auth_repo
 
@@ -18,8 +18,9 @@ def _holds(db: Db, ctx: RequestContext, code: str) -> bool:
 
 
 def _check_password(password: str) -> None:
-    if not any(ch.isalpha() for ch in password) or not any(ch.isdigit() for ch in password):
-        raise invalid("Use at least 8 characters with letters and digits.", "password")
+    problem = password_problem(password)
+    if problem:
+        raise invalid(problem, "password")
 
 
 # ---------------------------------------------------------------- users
@@ -34,12 +35,31 @@ def get_user(db: Db, ctx: RequestContext, user_id: int):
 
 
 def create_user(db: Db, ctx: RequestContext, f: dict[str, Any]):
-    if not f.get("password"):
-        raise invalid("A password is required for a new user.", "password")
-    _check_password(f["password"])
+    """A new user with a password the administrator types, or (send_invite) none: an e-mail invitation lets the
+    user choose their own (app/services/account_links_service.py)."""
+    from app.services import account_links_service as links
+
+    invite = bool(f.pop("send_invite", False))
+    if invite:
+        if f.get("password"):
+            raise invalid("Send an invitation or type a password, not both.", "password")
+        if not links.mail.enabled():
+            raise invalid("E-mail is not set up on this server, so invitations cannot be sent. Type a password.",
+                          "sendInvite")
+    elif not f.get("password"):
+        raise invalid("A password is required for a new user, or send an invitation.", "password")
+    else:
+        _check_password(f["password"])
     if f.get("role_ids") and not _holds(db, ctx, "access.roles.assign"):
         raise forbidden("You may not give roles to users.")
-    return access_repo.save_user(db, ctx.company_id, ctx.user_id, None, f, hash_password(f["password"]), None)
+    password_hash = links.UNUSABLE_PASSWORD if invite else hash_password(f["password"])
+    if not invite:
+        return access_repo.save_user(db, ctx.company_id, ctx.user_id, None, f, password_hash, None)
+    # One unit: no account is left behind without its invitation.
+    with db.transaction():
+        saved = access_repo.save_user(db, ctx.company_id, ctx.user_id, None, f, password_hash, None)
+        links.invite(db, ctx, int(saved[0]["id"]))
+    return saved
 
 
 def update_user(db: Db, ctx: RequestContext, user_id: int, f: dict[str, Any], row_version: bytes):

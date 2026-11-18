@@ -47,7 +47,11 @@ BEGIN
     OUTPUT inserted.id INTO @taken
     FROM [core].[webhook_delivery] d WITH (ROWLOCK, UPDLOCK, READPAST)
     JOIN [core].[webhook] w ON w.id = d.webhook_id AND w.is_active = 1
-    WHERE d.status = N'pending' AND d.next_attempt_at <= @now;
+    WHERE d.status = N'pending' AND d.next_attempt_at <= @now
+      -- A suspended or cancelled organisation's deliveries wait, untouched, until it is active again.
+      AND NOT EXISTS (SELECT 1 FROM [plat].[customer_company] cc
+                      JOIN [plat].[customer] c ON c.id = cc.customer_id AND c.status <> N'active'
+                      WHERE cc.company_id = w.company_id);
 
     SELECT d.id, d.attempts, w.id AS webhook_id, w.url, w.secret, e.id AS event_id, e.company_id, e.event_type,
            e.entity_type, e.entity_id, e.payload, e.occurred_at

@@ -3,17 +3,17 @@ the result (core.usp_webhook_delivery_result), which schedules retries. Runs in 
 the API (settings.webhook_worker) or as its own service (scripts/webhooks.py).
 
 The same loop sends due project reminders to the inbox once a minute (REMINDER_SECONDS); each one
-becomes a notification.created event, which the next pass delivers."""
+becomes a notification.created event, which the next pass delivers. It also sends queued e-mail
+(app/core/mail.py) when mail is switched on."""
 import hashlib
 import hmac
 import json
 import logging
 import threading
 import time
-import urllib.error
-import urllib.request
 from datetime import UTC, datetime
 
+from app.core import mail, outbound
 from app.core.config import settings
 from app.core.db import Db, connect
 
@@ -40,30 +40,24 @@ def signature(secret: str, timestamp: str, body: bytes) -> str:
     return "sha256=" + mac.hexdigest()
 
 
-def send(row: dict) -> tuple[bool, int | None, str | None, str | None]:
-    """(ok, status code, response body, error). Any 2xx is success."""
+def send(row: dict) -> tuple[bool, int | None, str | None]:
+    """(ok, status code, error). Any 2xx is success. Goes through app.core.outbound: public addresses
+    only, no redirects, and the receiver's reply body is not kept (BE-03)."""
     body = body_of(row)
     timestamp = str(int(time.time()))
-    req = urllib.request.Request(row["url"], data=body, method="POST", headers={
+    code, error = outbound.post(row["url"], body, {
         "Content-Type": "application/json", "User-Agent": USER_AGENT, "X-HRango-Event": row["event_type"],
         "X-HRango-Delivery": str(row["id"]), "X-HRango-Timestamp": timestamp,
-        "X-HRango-Signature": signature(row["secret"], timestamp, body)})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-            text = resp.read(2000).decode("utf-8", "replace")
-            return 200 <= resp.status < 300, resp.status, text, None
-    except urllib.error.HTTPError as exc:
-        return False, exc.code, exc.read(2000).decode("utf-8", "replace"), None
-    except Exception as exc:  # timeouts, refused connections, bad hosts
-        return False, None, None, f"{type(exc).__name__}: {exc}"[:1000]
+        "X-HRango-Signature": signature(row["secret"], timestamp, body)}, TIMEOUT_SECONDS)
+    return code is not None and 200 <= code < 300, code, error
 
 
 def dispatch_once(db: Db, batch: int = 20) -> int:
     """Sends what is due now. Returns how many deliveries were attempted."""
     rows = db.call("core.usp_webhook_due", batch=batch)
     for row in rows:
-        ok, code, text, error = send(row)
-        db.call("core.usp_webhook_delivery_result", id=row["id"], ok=ok, response_code=code, response_body=text,
+        ok, code, error = send(row)
+        db.call("core.usp_webhook_delivery_result", id=row["id"], ok=ok, response_code=code, response_body=None,
                 error=error)
         if not ok:
             log.warning("webhook %s delivery %s failed (%s %s)", row["webhook_id"], row["id"], code, error or "")
@@ -92,6 +86,11 @@ def run_forever(stop: threading.Event, poll_seconds: int) -> None:
                         log.exception("project reminders pass failed")
                 while dispatch_once(db) and not stop.is_set():
                     pass
+                try:
+                    while mail.deliver_due(db) and not stop.is_set():
+                        pass
+                except Exception:
+                    log.exception("mail pass failed")
             finally:
                 conn.close()
         except Exception:

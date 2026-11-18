@@ -6,3 +6,4 @@ logs/*
 !logs/.gitkeep
 .work/
 uploads/
+mail-outbox/

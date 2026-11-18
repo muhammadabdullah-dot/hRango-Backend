@@ -59,7 +59,10 @@ BEGIN
         THROW 50404, @missing, 1;
     END
     IF EXISTS (SELECT 1 FROM [auth].[fn_access_outranks](@company_id, @user_id, @actor_user_id))
-        THROW 50403, N'user|ACCOUNT_PROTECTED|Only the Account Owner can change an administrator, and nobody else can change the Account Owner.', 1;
+        THROW 50403, N'user|ACCOUNT_PROTECTED|This account holds access you do not hold yourself, or belongs to an administrator or the Account Owner.', 1;
+    -- Sessions are the account's, in every company: only its home company ends them (BE-04 c).
+    IF @user_id <> @actor_user_id AND EXISTS (SELECT 1 FROM [auth].[fn_access_not_home](@company_id, @user_id))
+        THROW 50403, N'user|ACCOUNT_HOME_ONLY|Only an administrator of this user''s home company can end their sessions.', 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @ended INT;
     BEGIN TRAN;

@@ -1,6 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Body, Depends, Query, Request, Response, status
+from starlette.concurrency import run_in_threadpool
 
 from app.controllers import attendance_controller as c
 from app.core.db import Db, get_db
@@ -157,8 +158,9 @@ def import_logs(body: FilePunchesIn, db: Db = Depends(get_db),
              openapi_extra={"requestBody": {"content": {"text/csv": {"schema": {"type": "string"}}}}})
 async def import_logs_csv(request: Request, db: Db = Depends(get_db),
                           ctx: RequestContext = Depends(require("attendance.logs.import"))) -> dict:
-    raw = await request.body()
-    return c.import_csv_punches(db, ctx, raw)
+    raw = await request.body()  # capped by the BodyLimit middleware
+    # The import makes blocking database calls: run them off the event loop so other requests keep moving (BE-10).
+    return await run_in_threadpool(c.import_csv_punches, db, ctx, raw)
 
 
 @router.get("/logs/{punch_id}", response_model=Item[PunchOut])

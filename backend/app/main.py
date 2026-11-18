@@ -6,12 +6,16 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import settings
+from app.core.config import check_startup, settings
 from app.core.logging import setup_logging
+from app.middlewares.body_limit import BodyLimit
 from app.middlewares.errors import register_error_handlers
 from app.middlewares.request_log import request_log
+from app.middlewares.security_headers import SecurityHeaders
 from app.routers.health import router as health_router
 
+# Before anything else: no API with a forgeable signing secret or an open CORS policy in production.
+check_startup(settings)
 setup_logging()
 
 # One router per module, all under /api (the frontend's VITE_API_BASE_URL).
@@ -36,7 +40,11 @@ async def lifespan(_: FastAPI):
         worker.close()
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+# The interactive docs list every route and field: on in development, off in production unless API_DOCS=true.
+_docs = settings.docs_enabled
+app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan,
+              docs_url="/docs" if _docs else None, redoc_url="/redoc" if _docs else None,
+              openapi_url="/openapi.json" if _docs else None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,6 +56,10 @@ app.add_middleware(
     expose_headers=["X-Request-Id", "Content-Disposition"],
 )
 app.middleware("http")(request_log)
+# Added last = outermost: oversized bodies are refused before any other layer reads them, and every
+# response, errors included, carries the security headers.
+app.add_middleware(SecurityHeaders)
+app.add_middleware(BodyLimit)
 register_error_handlers(app)
 
 app.include_router(health_router)
@@ -60,4 +72,5 @@ for name in ROUTERS:
 
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host=settings.host, port=settings.port)
+    uvicorn.run("app.main:app", host=settings.host, port=settings.port, proxy_headers=True,
+                forwarded_allow_ips=settings.forwarded_allow_ips)

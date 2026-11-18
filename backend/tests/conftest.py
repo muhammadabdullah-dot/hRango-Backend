@@ -10,11 +10,19 @@ do not depend on each other or on what is already in the database.
 """
 import os
 import re
+import secrets
 import tempfile
 
 # Tests send webhooks themselves (webhook_dispatcher.dispatch_once); no background worker.
 os.environ["WEBHOOK_WORKER"] = "false"
 os.environ["PUBLIC_BASE_URL"] = ""
+# Fresh signing secrets per run (the API refuses to start without strong ones), whatever .env says.
+os.environ["JWT_SECRET"] = secrets.token_urlsafe(48)
+os.environ["FILE_LINK_SECRET"] = secrets.token_urlsafe(48)
+os.environ.setdefault("APP_ENV", "development")
+# Many tests sign in wrongly on purpose from the one test client address; tests/test_login_throttle.py
+# switches the limits back on for itself.
+os.environ["LOGIN_THROTTLE"] = "false"
 # Uploads from tests go to a throw-away folder, never the real uploads folder.
 os.environ.setdefault("UPLOAD_DIR", tempfile.mkdtemp(prefix="hrango_test_uploads_"))
 
@@ -36,6 +44,11 @@ def pytest_configure(config):
 @pytest.fixture(scope="session")
 def db():
     conn = connect()
+    # Webhooks an earlier, interrupted run left pointing at its local test receivers: their ports are dead,
+    # and every flush in this run would wait on them.
+    cur = conn.cursor()
+    cur.execute("UPDATE core.webhook SET is_active = 0 WHERE url LIKE N'http://127.0.0.1:%' AND is_active = 1")
+    cur.close()
     yield Db(conn)
     conn.close()
 

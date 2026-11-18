@@ -71,6 +71,10 @@ BEGIN
     IF @company_id <> @session_company
        AND NOT EXISTS (SELECT 1 FROM [auth].[user_company] WHERE user_account_id = @user_id AND company_id = @company_id)
         THROW 50403, N'You do not have access to that company.', 1;
+    -- Switching (X-Company-Id) into a company of a suspended or cancelled organisation is refused too,
+    -- not only signing in to one.
+    IF @company_id <> @session_company AND [plat].[fn_company_blocked](@company_id) = 1
+        THROW 50403, N'That company''s subscription is suspended.', 1;
 
     -- Touch the session at most every five minutes, not on every request.
     IF @last_seen IS NULL OR @last_seen < DATEADD(MINUTE, -5, @now)

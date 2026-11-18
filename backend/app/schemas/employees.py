@@ -542,3 +542,21 @@ class UpdateRequestOut(ApiModel):
     created_by_name: str | None
     updated_at: datetime | None
     row_version: str
+
+
+# ---------------------------------------------------------------- bulk import (roadmap 1.1)
+
+class ImportProblemOut(ApiModel):
+    # The file's row number (1 is the header); None for a problem with the whole file.
+    row: int | None
+    column: str | None
+    message: str
+
+
+class ImportReportOut(ApiModel):
+    total: int
+    created: int
+    dry_run: bool
+    errors: list[ImportProblemOut]
+    # Columns the file has that the import does not read.
+    ignored_columns: list[str]

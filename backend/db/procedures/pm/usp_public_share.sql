@@ -15,13 +15,16 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @from DATETIME2(0), @to DATETIME2(0), @max INT, @used INT, @public BIT;
+    DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @from DATETIME2(0), @to DATETIME2(0), @max INT, @used INT, @public BIT,
+            @company BIGINT;
     SET @share_id = NULL;
-    SELECT @share_id = s.id, @from = s.valid_from, @to = s.valid_to, @max = s.max_access, @public = s.is_public
+    SELECT @share_id = s.id, @from = s.valid_from, @to = s.valid_to, @max = s.max_access, @public = s.is_public,
+           @company = w.company_id
     FROM [pm].[share_link] s JOIN [pm].[workspace] w ON w.id = s.workspace_id
     WHERE s.token = @token;
 
-    IF @share_id IS NULL OR ISNULL(@public, 0) = 0
+    -- A suspended or cancelled organisation's links answer as if they did not exist.
+    IF @share_id IS NULL OR ISNULL(@public, 0) = 0 OR [plat].[fn_company_blocked](@company) = 1
     BEGIN
         SELECT @state = N'not_found', @share_id = NULL;
         RETURN;

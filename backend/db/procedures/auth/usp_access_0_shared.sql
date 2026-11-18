@@ -18,7 +18,8 @@ GO
 -- can reset an administrator's password and sign in as them:
 --   the Account Owner is changed by nobody but themselves;
 --   other administrators (who hold access.users.edit) answer to the Account Owner, not to each other;
---   and nobody touches an account holding user or role administration they do not hold as widely.
+--   and nobody touches an account holding user or role administration, or any access beyond its own
+--   records, that they do not hold as widely.
 CREATE OR ALTER FUNCTION [auth].[fn_access_outranks] (@company_id BIGINT, @target_id BIGINT, @actor_id BIGINT)
 RETURNS TABLE
 AS RETURN
@@ -32,13 +33,28 @@ FROM (
     WHERE t.code = N'access.users.edit'
       AND NOT EXISTS (SELECT 1 FROM [auth].[user_account] a WHERE a.id = @actor_id AND a.is_account_owner = 1)
     UNION ALL
+    -- User and role administration at any scope, and every other permission beyond one's own records
+    -- (BE-04 a): someone who may edit users but not run payroll cannot reset the Payroll Manager's, an HR
+    -- Manager's or an executive's password and sign in as them. A helpdesk still resets ordinary staff,
+    -- whose access covers only their own records.
     SELECT t.code
     FROM [auth].[fn_access_held](@company_id, @target_id) t
-    WHERE t.code LIKE N'access.%'
+    WHERE (t.code LIKE N'access.%' OR t.max_rank >= 2)
       AND NOT EXISTS (SELECT 1 FROM [auth].[fn_access_held](@company_id, @actor_id) a
                       WHERE a.permission_id = t.permission_id AND a.max_rank >= t.max_rank)
 ) x
 WHERE @target_id <> @actor_id;
+GO
+
+-- A row when @company_id is not @target_id's home company. The sign-in itself (email, name, password,
+-- employee link, switched on or off, sessions) belongs to the home company: an administrator of another
+-- company the user was given access to manages only that access (BE-04 c).
+CREATE OR ALTER FUNCTION [auth].[fn_access_not_home] (@company_id BIGINT, @target_id BIGINT)
+RETURNS TABLE
+AS RETURN
+SELECT u.company_id AS home_company_id
+FROM [auth].[user_account] u
+WHERE u.id = @target_id AND u.company_id <> @company_id;
 GO
 
 -- The sign-in accounts that belong to a company: its home users and those given access to it.

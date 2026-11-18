@@ -144,7 +144,8 @@ def remove(storage_path: str) -> None:
 
 
 def _key() -> str:
-    return settings.jwt_secret + ":files"
+    # Its own secret (BE-01): a leaked or rotated sign-in secret says nothing about download links.
+    return settings.file_link_secret
 
 
 def file_url(file_id: int | str | None, company_id: int) -> str | None:

@@ -22,7 +22,8 @@ def _body(message: str, code: str, field_errors: dict[str, str] | None = None) -
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def app_error(_: Request, exc: AppError) -> JSONResponse:
-        return JSONResponse(_body(exc.message, exc.code, exc.field_errors), status_code=exc.status)
+        return JSONResponse(_body(exc.message, exc.code, exc.field_errors), status_code=exc.status,
+                            headers=exc.headers or None)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:

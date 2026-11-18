@@ -304,6 +304,9 @@ BEGIN
                      AND j.max_head_count <= (SELECT COUNT(*) FROM [hr].[employee] x
                                               WHERE x.job_title_id = j.id AND x.status NOT IN (N'left', N'inactive')))
         THROW 50409, N'jobTitleId|JOB_TITLE_FULL|This job title has reached its head-count limit.', 1;
+    -- The organisation's plan covers a number of employees (roadmap 1.3).
+    IF @id IS NULL
+        EXEC [plat].[usp_plan_employee_check] @company_id = @company_id, @adding = 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @today DATE = CAST(SYSUTCDATETIME() AS DATE);
 
@@ -505,6 +508,9 @@ BEGIN
         THROW 50409, N'This employee is already switched off.', 1;
     IF @active = 1 AND @old_status <> N'inactive'
         THROW 50409, N'This employee is not switched off.', 1;
+    -- Switching someone back on counts against the plan again (roadmap 1.3).
+    IF @active = 1
+        EXEC [plat].[usp_plan_employee_check] @company_id = @company_id, @adding = 1;
 
     DECLARE @new NVARCHAR(30) = CASE WHEN @active = 1 THEN N'active' ELSE N'inactive' END;
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();

@@ -4,9 +4,11 @@ photo, emergency contacts, dependents, skills, education, experience, contracts,
 Update Information requests (comparison/12-employee-profile.md)."""
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
+from starlette.concurrency import run_in_threadpool
 
 from app.controllers import employees_controller as c
+from app.services import employee_import_service
 from app.core.db import Db, get_db
 from app.core.paging import MAX_PAGE_SIZE, PageParams, page_params
 from app.middlewares.auth import RequestContext, get_context, require
@@ -14,11 +16,11 @@ from app.schemas.common import Item, Paginated
 from app.schemas.employees import (BankAccountIn, BankAccountOut, ChangeOut, ContractIn, ContractOut, DecisionIn,
                                    DependentIn, DependentOut, DocumentIn, DocumentOut, EducationIn, EducationOut,
                                    EmergencyContactIn, EmergencyContactOut, EmployeeCreateIn, EmployeeIn,
-                                   EmployeeLookupOut,
-                                   EmployeeOut, EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut,
-                                   EmployeePayItemIn, EmployeePayItemOut, EmployeePhotoOut, ExperienceIn, ExperienceOut,
-                                   HistoryOut, IdentityIn, PhotoIn, RowVersionIn, SalaryIn, SalaryOut, SkillIn,
-                                   SkillOut, UpdateRequestIn, UpdateRequestOut)
+                                   EmployeeLookupOut, EmployeeOut, EmployeePayItemIn, EmployeePayItemOut,
+                                   EmployeePhotoOut, EmployeeSummaryOut, EmploymentPeriodIn, EmploymentPeriodOut,
+                                   ExperienceIn, ExperienceOut, HistoryOut, IdentityIn, ImportReportOut, PhotoIn,
+                                   RowVersionIn, SalaryIn, SalaryOut, SkillIn, SkillOut, UpdateRequestIn,
+                                   UpdateRequestOut)
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 NO_CONTENT = status.HTTP_204_NO_CONTENT
@@ -117,6 +119,26 @@ def reject_update_request(request_id: int, body: DecisionIn, db: Db = Depends(ge
 def cancel_update_request(request_id: int, body: DecisionIn, db: Db = Depends(get_db),
                           ctx: RequestContext = Depends(require("employees.update_requests.cancel"))) -> dict:
     return c.decide_update_request(db, ctx, request_id, "cancelled", body.remarks, body.row_version)
+
+
+# ---------------------------------------------------------------- bulk import (before /{employee_id})
+
+@router.get("/import/template", responses={200: {"content": {"text/csv": {}}, "description": "CSV template"}})
+def import_template(_: RequestContext = Depends(require("employees.directory.create"))) -> Response:
+    """The columns the import reads, with one example row."""
+    return Response(employee_import_service.template_csv(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="employees-import-template.csv"'})
+
+
+@router.post("/import", response_model=Item[ImportReportOut],
+             openapi_extra={"requestBody": {"content": {"text/csv": {"schema": {"type": "string"}}}}})
+async def import_employees(request: Request, dry_run: bool = Query(False, alias="dryRun"), db: Db = Depends(get_db),
+                           ctx: RequestContext = Depends(require("employees.directory.create"))) -> dict:
+    """Checks a CSV of people (dryRun=true only checks) and imports them all, or none: `errors` lists every
+    problem by row and column. Up to 2,000 rows; the plan's employee limit applies."""
+    raw = await request.body()  # capped by the BodyLimit middleware
+    report = await run_in_threadpool(employee_import_service.import_csv, db, ctx, raw, dry_run)
+    return {"data": ImportReportOut(**report)}
 
 
 @router.get("/{employee_id}", response_model=Item[EmployeeOut])

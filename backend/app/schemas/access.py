@@ -16,6 +16,8 @@ class UserIn(ApiModel):
     employee_id: int | None = None
     # New users only; afterwards PUT /access/users/{id}/password.
     password: str | None = Field(None, min_length=8, max_length=200)
+    # New users only, instead of a password: e-mail an invitation to choose one (needs mail set up).
+    send_invite: bool = False
     is_active: bool = True
     # Extra companies the user may switch to; the active company is always their home on creation.
     # Left out on an edit: unchanged.
@@ -23,6 +25,13 @@ class UserIn(ApiModel):
     # New users only (needs access.roles.assign); afterwards PUT /access/users/{id}/roles.
     role_ids: list[int] | None = None
     row_version: str | None = None
+
+
+class InviteOut(ApiModel):
+    sent_to: str
+    expires_at: datetime
+    # queued (the worker sends it) or disabled (mail is off; not sent)
+    status: str
 
 
 class RefOut(ApiModel):

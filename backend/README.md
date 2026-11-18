@@ -192,7 +192,36 @@ departments, employees and signed-in users with given roles; module tests make t
 
 ## Running
 
-`run.bat`, or `.venv\Scripts\python.exe -m app.main` (`HOST` and `PORT` from `.env`; `HOST=0.0.0.0` opens it to the LAN). Docs at `/docs`.
+`run.bat`, or `.venv\Scripts\python.exe -m app.main` (`HOST` and `PORT` from `.env`; `HOST=0.0.0.0` opens it to the LAN). Docs at `/docs` when `APP_ENV=development` (or `API_DOCS=true`).
+
+The API refuses to start, with a message naming each problem, when:
+- `JWT_SECRET` or `FILE_LINK_SECRET` is missing, an example value such as `change-me`, or shorter than 32 characters;
+- the two secrets are the same;
+- `APP_ENV` is `production` (the default) and `CORS_ORIGINS` contains `*`.
+
+Every server that ever ran with `change-me` must get two new random secrets: anyone could forge sign-ins and
+download links on it.
+
+Sign-in limits: failed passwords in the last 15 minutes pause sign-in (429 `TOO_MANY_ATTEMPTS` with
+`Retry-After`) after 5 for one email from one address, 20 for one email from anywhere, or 50 from one address
+against any email; the pause ends 15 minutes after the last failure. An unknown email costs the same password
+check as a wrong password. Platform staff sign-in has the same limits. Behind a proxy set `FORWARDED_ALLOW_IPS`
+so the limits see each caller's address, not the proxy's.
+
+Webhooks call public addresses only: private, loopback, link-local (cloud metadata) and other internal ranges
+are refused when the webhook is saved and again on every delivery; redirects are not followed; production
+requires https; the receiver's reply body is not kept. `WEBHOOK_ALLOW_PRIVATE=true` (development only) lets
+you test with a receiver on your own machine.
+
+Suspending or cancelling an organisation (Platform) stops, for each of its companies: sign-in and open
+sessions, switching into the company with `X-Company-Id`, webhook deliveries (they wait), nightly jobs,
+project reminders and public share links (they answer 404). A company a customer creates joins that
+customer, so its plan and suspension cover it.
+
+Built-in protection: request bodies over `MAX_UPLOAD_MB` (plus 1 MB for form framing) are refused with 413
+before they are read; every response carries `nosniff`, `no-referrer`, `no-store` (downloads keep their
+own private caching), `X-Frame-Options: DENY` and a deny-all CSP, plus HSTS in production; a caller's
+`X-Request-Id` is kept only when it is a plain token of up to 64 characters.
 
 ## Parallel work (several people or agents at once)
 

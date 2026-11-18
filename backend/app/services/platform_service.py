@@ -3,10 +3,12 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.core import login_throttle
+from app.core.config import settings
 from app.core.db import Db
 from app.core.default_roles import expanded as default_roles
 from app.core.errors import AppError, invalid
-from app.core.security import create_staff_token, hash_password, staff_token_expiry, verify_password
+from app.core.security import create_staff_token, hash_password, password_matches, staff_token_expiry
 from app.repos import platform_repo
 
 _BAD_LOGIN = AppError(401, "BAD_CREDENTIALS", "The email or password is not correct.")
@@ -19,11 +21,18 @@ def _check_password(password: str) -> None:
 
 
 def login(db: Db, email: str, password: str, device: str | None, ip_address: str | None) -> tuple[str, dict[str, Any]]:
-    """The same answer for an unknown email and a wrong password; a failed attempt is logged."""
-    account = platform_repo.login_get(db, email.strip().lower())
-    if account is None or not verify_password(password, account["password_hash"]):
+    """The same answer, in the same time, for an unknown email and a wrong password; a failed attempt is
+    logged, and repeated failures pause sign-in (app.core.login_throttle)."""
+    email = email.strip().lower()
+    if settings.login_throttle:
+        login_throttle.check(db, "staff", email, ip_address)
+    account = platform_repo.login_get(db, email)
+    ok = password_matches(password, account["password_hash"] if account else None)
+    if settings.login_throttle:
+        login_throttle.record(db, "staff", email, ip_address, ok)
+    if not ok:
         platform_repo.audit(db, account["id"] if account else None, "sign_in_failed", ip_address,
-                            None if account else email.strip().lower()[:200])
+                            None if account else email[:200])
         raise _BAD_LOGIN
     if not account["is_active"]:
         raise AppError(403, "ACCOUNT_DISABLED", "This account is switched off.")

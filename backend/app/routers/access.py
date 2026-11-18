@@ -6,11 +6,12 @@ from app.controllers import access_controller as c
 from app.core.db import Db, get_db
 from app.core.paging import PageParams, page_params
 from app.middlewares.auth import RequestContext, get_context, require
-from app.schemas.access import (AuditOut, EffectivePermissionOut, EndedOut, OverrideIn, OverrideOut, OwnPasswordIn,
-                                PasswordIn, PermissionOut, RoleCopyIn, RoleDetailOut, RoleIn, RoleOut,
+from app.schemas.access import (AuditOut, EffectivePermissionOut, EndedOut, InviteOut, OverrideIn, OverrideOut,
+                                OwnPasswordIn, PasswordIn, PermissionOut, RoleCopyIn, RoleDetailOut, RoleIn, RoleOut,
                                 RolePermissionsIn, RowVersionIn, SessionOut, UserDetailOut, UserIn, UserOut,
                                 UserRolesIn)
 from app.schemas.common import Item, Paginated
+from app.services import account_links_service as links
 
 router = APIRouter(prefix="/access", tags=["access"])
 NO_CONTENT = status.HTTP_204_NO_CONTENT
@@ -69,6 +70,14 @@ def transfer_owner(user_id: int, body: RowVersionIn, db: Db = Depends(get_db),
                    ctx: RequestContext = Depends(require("access.users.edit"))) -> dict:
     """The Account Owner hands the role to another Company Administrator."""
     return c.transfer_owner(db, ctx, user_id, body.row_version)
+
+
+@router.post("/users/{user_id}/invite", response_model=Item[InviteOut], status_code=status.HTTP_202_ACCEPTED)
+def invite_user(user_id: int, db: Db = Depends(get_db),
+                ctx: RequestContext = Depends(require("access.users.edit"))) -> dict:
+    """E-mails the user a link to choose their own password (valid 7 days; a newer one replaces it).
+    503 MAIL_UNAVAILABLE when e-mail is not set up."""
+    return {"data": InviteOut(**links.invite(db, ctx, user_id))}
 
 
 @router.put("/users/{user_id}/password", status_code=NO_CONTENT)

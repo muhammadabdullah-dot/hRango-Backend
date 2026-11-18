@@ -1,8 +1,12 @@
--- Creates a company if none has this name (installer and tests). Returns its id.
+-- Creates a company with its defaults (registration, sign-up, installer and tests). Returns its id.
+-- @reuse = 1 (the installer's --bootstrap only, so running it twice is harmless) returns an existing
+-- company of that name instead. Names are unique per organisation, not platform-wide, so nothing else
+-- may look a company up by name: a registration would join somebody else's company.
 CREATE OR ALTER PROCEDURE [org].[usp_company_provision]
     @name     NVARCHAR(200),
     @currency CHAR(3) = 'PKR',
-    @timezone NVARCHAR(64) = N'Asia/Karachi'
+    @timezone NVARCHAR(64) = N'Asia/Karachi',
+    @reuse    BIT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -12,7 +16,7 @@ BEGIN
     IF @name IS NULL OR @name = N''
         THROW 50400, N'name|Company name is required.', 1;
 
-    DECLARE @id BIGINT = (SELECT id FROM [org].[company] WHERE name = @name);
+    DECLARE @id BIGINT = CASE WHEN @reuse = 1 THEN (SELECT TOP 1 id FROM [org].[company] WHERE name = @name ORDER BY id) END;
     IF @id IS NULL
     BEGIN
         BEGIN TRAN;
