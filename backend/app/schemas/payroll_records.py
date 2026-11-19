@@ -71,6 +71,10 @@ class VoucherOut(ApiModel):
     verified_at: datetime | None
     remarks: str | None
     status: str
+    # Who raised the voucher (the account). Verify is refused for them and for whoever approved it (four eyes).
+    created_by_user_id: str | None = None
+    # A verified Salary Advance: the loan its recovery from salary is deducted through.
+    loan_id: str | None = None
     created_at: datetime
     updated_at: datetime | None
     row_version: str
@@ -345,8 +349,11 @@ class LeaveEncashmentPreviewOut(ApiModel):
     employee_id: str
     employee_name: str | None
     available_days: float
+    # Days of this leave type already encashed for the person in the leave year (earlier encashments, a final
+    # settlement): the Max Limit is per person a year, so only what is left of it can be encashed now.
+    already_encashed_days: float = 0
     encashable_days: float
-    # 'min': below the type's minimum, left out; 'max': paid for the maximum only.
+    # 'min': below the type's minimum, left out; 'max': paid only up to the year's maximum (none when it is used up).
     capped_by: Literal["min", "max"] | None
     amount: float
 

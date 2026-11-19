@@ -124,6 +124,8 @@ payslip                               one per person per run; final settlement s
 
 payslip_line
   id PK, payslip_id FK payslip, pay_item_id {NN} FK pay_item, amount, employer_contribution, is_taxable, is_manually_updated
+  label {NVARCHAR(100)}               a one-off line's own label (shown instead of the pay item's name)
+  is_one_off                          added by hand on Edit Pay Slip; only these can be removed (0021)
   UNIQUE (payslip_id, pay_item_id)
 
 opening_balance                       Balances -> Opening Balance; added to the pay item in that month's run
@@ -131,6 +133,7 @@ opening_balance                       Balances -> Opening Balance; added to the 
 
 employee_account_entry                Provident Fund, EOBI, medical … ledger (Employee Accounts, Statement)
   id PK, employee_id FK employee, account_type_id {NN} FK account_type, entry_month {NN}, credit, debit, is_processed, payslip_id FK payslip, pay_rule_id {NULL} FK pay_rule, description
+  voucher_id        FK voucher        a Salary Advance voucher's debit and its recoveries (0022)
 
 voucher                               Vouchers / Employee Voucher; daily-wage vouchers
   id                PK
@@ -155,6 +158,7 @@ voucher                               Vouchers / Employee Voucher; daily-wage vo
   verified_at
   remarks                             approver's or verifier's remarks
   status                              pending, approved, rejected, processed
+  loan_id           FK loan           Salary Advance: the loan its recovery is deducted through (0022)
 
 payroll_close_email                   Payroll close e-mail (one per closed monthly run); the people are rows of mail_outbox
   id PK, payroll_id FK payroll
@@ -173,6 +177,7 @@ mail_outbox                           payroll e-mails, one row per person: close
   status                              disabled, queued, sent, failed
   queued_at, sent_at
   error {NVARCHAR(1000)}
+  mail_message_id {BIGINT}            core.mail_message queued for it (no FK: core may clear old messages) (0020)
   INDEX (entity_type, entity_id)
 ```
 

@@ -320,10 +320,15 @@ def test_voucher_decider_without_an_employee_record_and_code_search(client, db, 
     a = approved.json()["data"]
     assert a["approvedById"] is None
     assert a["approvedByUserId"] == str(bare["user_id"]) and a["approvedByName"] == "Test User"
+    # Whoever approved does not verify too (four eyes); another account without an employee record does.
+    same = client.post(f"/api/payroll/vouchers/{v['id']}/verify", json={"rowVersion": a["rowVersion"]},
+                       headers=bare["headers"])
+    assert same.status_code == 403 and same.json()["code"] == "VOUCHER_SAME_PERSON"
+    verifier = factories.login_as(db, client, ctx["company"], role_codes="company_admin")
     verified = client.post(f"/api/payroll/vouchers/{v['id']}/verify", json={"rowVersion": a["rowVersion"]},
-                           headers=bare["headers"])
+                           headers=verifier["headers"])
     assert verified.status_code == 200, verified.text
-    assert verified.json()["data"]["verifiedByUserId"] == str(bare["user_id"])
+    assert verified.json()["data"]["verifiedByUserId"] == str(verifier["user_id"])
     assert verified.json()["data"]["verifiedByName"] == "Test User"
 
     # voucherCode is a contains search (escaped), not an exact match.

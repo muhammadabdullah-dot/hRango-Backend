@@ -3,9 +3,10 @@
 -- installments paid, warning penalties linked to the payslip, leave encashments linked, rule postings
 -- processed. Logged with user and time. Publishes payroll.closed and tells each employee whose payslip
 -- was released.
--- Monthly runs also record the close e-mail (pay.payroll_close_email): 'disabled' while mail is not set
--- up (@mail_enabled 0, nothing is sent), else 'queued'; one pay.mail_outbox row per person with a
--- released payslip and an e-mail address (status 'queued' for the mail sender, or 'disabled').
+-- Monthly runs also record the close e-mail (pay.payroll_close_email): 'disabled' while mail is off
+-- (@mail_enabled 0, nothing is sent), else 'queued'; one pay.mail_outbox row per person with a released
+-- payslip and an e-mail address (status 'queued', or 'disabled'). The API then queues each person's own
+-- message with the mail sender (app/services/payroll_mail_service.py, pay.usp_mail_outbox_hand_off).
 CREATE OR ALTER PROCEDURE [pay].[usp_payroll_close]
     @company_id    BIGINT,
     @actor_user_id BIGINT = NULL,
@@ -29,6 +30,21 @@ BEGIN
         THROW 50409, N'status|PAYROLL_CLOSED|This payroll is already closed', 1;
     IF @status = N'open' OR NOT EXISTS (SELECT 1 FROM [pay].[payslip] WHERE payroll_id = @id)
         THROW 50409, N'status|PAYROLL_NOT_RUN|Run the payroll before closing it', 1;
+    -- Daily wages: never a day a monthly payroll already pays (it may have taken the person in after processing).
+    IF @kind = N'daily_wage'
+    BEGIN
+        DECLARE @twice NVARCHAR(400) = (
+            SELECT TOP 1 CONCAT(N'status|PAID_BY_MONTHLY_PAYROLL|', e.first_name, N' ', e.last_name,
+                                N' is already paid for this day by the monthly payroll ', m.name, N' (', m.code,
+                                N'). Process the daily wages again before closing.')
+            FROM [pay].[payslip] p
+            CROSS APPLY [pay].[fn_day_paid_monthly](p.employee_id, @work_date) m
+            JOIN [hr].[employee] e ON e.id = p.employee_id
+            WHERE p.payroll_id = @id
+            ORDER BY e.first_name, e.last_name);
+        IF @twice IS NOT NULL
+            THROW 50409, @twice, 1;
+    END
 
     DECLARE @from DATE = ISNULL(@month, @work_date), @to DATE = ISNULL(EOMONTH(@month), @work_date);
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
@@ -53,8 +69,10 @@ BEGIN
         IF @kind = N'monthly'
         BEGIN
             -- Loan installments due this month, for people whose slip deducted them.
+            DECLARE @paid TABLE (id BIGINT PRIMARY KEY);
             UPDATE i
             SET status = N'paid', paid_amount = i.amount, paid_at = @now, payslip_id = p.id, updated_at = @now, updated_by = @actor_user_id
+            OUTPUT inserted.id INTO @paid
             FROM [loan].[loan_installment] i
             JOIN [loan].[loan] l ON l.id = i.loan_id AND l.status = N'active'
             JOIN [loan].[loan_type] lt ON lt.id = l.loan_type_id
@@ -65,6 +83,12 @@ BEGIN
                           JOIN [pay].[pay_item] pi ON pi.id = ln.pay_item_id
                           WHERE ln.payslip_id = p.id AND ln.amount > 0
                             AND (ln.pay_item_id = lt.deduction_pay_item_id OR (lt.deduction_pay_item_id IS NULL AND pi.system_code = N'loan_deduction')));
+            -- Salary advances recovered now are credited back to the account their payment was debited to.
+            IF EXISTS (SELECT 1 FROM @paid)
+            BEGIN
+                DECLARE @paid_ids NVARCHAR(MAX) = (SELECT CONCAT(N'[', STRING_AGG(CONVERT(NVARCHAR(MAX), id), N','), N']') FROM @paid);
+                EXEC [pay].[usp_voucher_advance_recovered] @actor_user_id = @actor_user_id, @paid = @paid_ids;
+            END
 
             UPDATE l SET status = N'settled', settled_at = @now, updated_at = @now, updated_by = @actor_user_id
             FROM [loan].[loan] l

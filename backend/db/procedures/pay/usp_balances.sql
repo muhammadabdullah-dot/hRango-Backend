@@ -333,8 +333,9 @@ BEGIN
         END
         ELSE
         BEGIN
-            DECLARE @rv BINARY(8), @rule BIGINT, @slip BIGINT;
-            SELECT @rv = a.row_version, @rule = a.pay_rule_id, @slip = a.payslip_id FROM [pay].[employee_account_entry] a
+            DECLARE @rv BINARY(8), @rule BIGINT, @slip BIGINT, @voucher BIGINT;
+            SELECT @rv = a.row_version, @rule = a.pay_rule_id, @slip = a.payslip_id, @voucher = a.voucher_id
+            FROM [pay].[employee_account_entry] a
             JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, @permission_code) v ON v.employee_id = a.employee_id
             WHERE a.id = @id;
             IF @rv IS NULL
@@ -343,6 +344,8 @@ BEGIN
                 THROW 50409, N'Someone else changed this account entry. Reload it and try again', 1;
             IF @rule IS NOT NULL OR @slip IS NOT NULL
                 THROW 50409, N'status|ENTRY_FROM_PAYROLL|A payroll posted this entry. It cannot be changed here', 1;
+            IF @voucher IS NOT NULL
+                THROW 50409, N'status|ENTRY_FROM_VOUCHER|A salary advance voucher posted this entry. It cannot be changed here', 1;
             UPDATE [pay].[employee_account_entry]
             SET employee_id = @employee_id, account_type_id = @account_type_id, entry_month = @entry_month, credit = ISNULL(@credit, 0),
                 debit = ISNULL(@debit, 0), is_processed = @is_processed, description = @description, updated_at = @now, updated_by = @actor_user_id
@@ -365,8 +368,9 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
-    DECLARE @rv BINARY(8), @rule BIGINT, @slip BIGINT;
-    SELECT @rv = a.row_version, @rule = a.pay_rule_id, @slip = a.payslip_id FROM [pay].[employee_account_entry] a
+    DECLARE @rv BINARY(8), @rule BIGINT, @slip BIGINT, @voucher BIGINT;
+    SELECT @rv = a.row_version, @rule = a.pay_rule_id, @slip = a.payslip_id, @voucher = a.voucher_id
+    FROM [pay].[employee_account_entry] a
     JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, @permission_code) v ON v.employee_id = a.employee_id
     WHERE a.id = @id;
     IF @rv IS NULL
@@ -375,6 +379,8 @@ BEGIN
         THROW 50409, N'Someone else changed this account entry. Reload it and try again', 1;
     IF @rule IS NOT NULL OR @slip IS NOT NULL
         THROW 50409, N'status|ENTRY_FROM_PAYROLL|A payroll posted this entry. It cannot be deleted here', 1;
+    IF @voucher IS NOT NULL
+        THROW 50409, N'status|ENTRY_FROM_VOUCHER|A salary advance voucher posted this entry. It cannot be deleted here', 1;
     BEGIN TRAN;
         DELETE [pay].[employee_account_entry] WHERE id = @id;
         INSERT [core].[audit_log] (entity_type, entity_id, action_name, performed_by_user_id, performed_at)

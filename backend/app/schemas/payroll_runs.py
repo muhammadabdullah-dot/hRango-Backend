@@ -337,6 +337,10 @@ class PayslipLineOut(ApiModel):
     is_manually_updated: bool
     is_display_only: bool
     calculate_only: bool
+    # A one-off line added by hand on Edit Pay Slip (it can be removed); its own label is shown instead of the pay
+    # item's name when given.
+    label: str | None = None
+    is_one_off: bool = False
 
 
 class PayslipDisplayOut(ApiModel):
@@ -372,9 +376,14 @@ class PayslipDetailOut(PayslipOut):
 
 
 class PayslipLineIn(ApiModel):
+    """A line to change. A pay item not on the slip yet is added as a one-off line (with an optional label, e.g.
+    "Test bonus"); `remove` takes a one-off line off the slip again."""
     pay_item_id: int
-    amount: Decimal
-    employer_contribution: Decimal | None = None
+    # Required unless the line is removed.
+    amount: Decimal | None = Field(default=None, ge=0, le=Decimal("10000000000"))
+    employer_contribution: Decimal | None = Field(default=None, ge=0, le=Decimal("10000000000"))
+    label: str | None = Field(default=None, max_length=100)
+    remove: bool = False
 
 
 class PayslipEditIn(ApiModel):

@@ -1,5 +1,8 @@
 -- Vouchers and Employee Voucher: created (pending), approved or rejected by the manager, then verified by
 -- Finance, which marks them processed. Daily-wage vouchers start approved (usp_daily_wage_vouchers).
+-- Four eyes: whoever approved a voucher, or raised it, cannot also verify it for payment.
+-- A verified Salary Advance is the employee's debt: it is debited to their Salary Advance account and recovered
+-- from later salary through a loan (pay.usp_voucher_advance_post).
 
 CREATE OR ALTER PROCEDURE [pay].[usp_voucher_list]
     @company_id      BIGINT,
@@ -55,7 +58,7 @@ BEGIN
            COALESCE(NULLIF(CONCAT_WS(N' ', ap.first_name, ap.last_name), N''), apu.display_name, apu.email) AS approved_by_name, v.approved_at,
            v.verified_by_id, v.verified_by_user_id,
            COALESCE(NULLIF(CONCAT_WS(N' ', vf.first_name, vf.last_name), N''), vfu.display_name, vfu.email) AS verified_by_name, v.verified_at,
-           v.remarks, v.status, v.created_at, v.updated_at, v.row_version
+           v.remarks, v.status, v.created_by AS created_by_user_id, v.loan_id, v.created_at, v.updated_at, v.row_version
     FROM #ids i
     JOIN [pay].[voucher] v ON v.id = i.id
     JOIN [hr].[employee] e ON e.id = v.employee_id
@@ -94,7 +97,7 @@ BEGIN
            COALESCE(NULLIF(CONCAT_WS(N' ', ap.first_name, ap.last_name), N''), apu.display_name, apu.email) AS approved_by_name, v.approved_at,
            v.verified_by_id, v.verified_by_user_id,
            COALESCE(NULLIF(CONCAT_WS(N' ', vf.first_name, vf.last_name), N''), vfu.display_name, vfu.email) AS verified_by_name, v.verified_at,
-           v.remarks, v.status, v.created_at, v.updated_at, v.row_version
+           v.remarks, v.status, v.created_by AS created_by_user_id, v.loan_id, v.created_at, v.updated_at, v.row_version
     FROM [pay].[voucher] v
     JOIN [hr].[employee] e ON e.id = v.employee_id
     LEFT JOIN [org].[department] dp ON dp.id = e.department_id
@@ -215,8 +218,115 @@ BEGIN
 END
 GO
 
+-- A verified Salary Advance voucher: the employee owes it back. It is debited to their "Salary Advance" account
+-- (Employee Accounts, Account Statement; the account type is added on first use) and recovered from later salary
+-- the way an approved Loan & Advance request is: a loan (no request) with the "Salary Advance" loan type's No. of
+-- Installments, every Gap Between Installments months (the type is added on first use, turned off so requests do
+-- not offer it: the whole advance from one salary), from the first month no closed payroll has paid the person
+-- yet (the voucher's month or later). Payroll deducts each installment as Loan Deduction, and closing credits the
+-- account back. Internal: runs inside usp_voucher_decide's transaction.
+CREATE OR ALTER PROCEDURE [pay].[usp_voucher_advance_post]
+    @company_id    BIGINT,
+    @actor_user_id BIGINT = NULL,
+    @id            BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    DECLARE @employee_id BIGINT, @amount DECIMAL(18,2), @currency CHAR(3), @method NVARCHAR(30), @date DATE,
+            @no NVARCHAR(30), @loan_id BIGINT;
+    SELECT @employee_id = employee_id, @amount = amount, @currency = currency, @method = payment_method,
+           @date = voucher_date, @no = voucher_no, @loan_id = loan_id
+    FROM [pay].[voucher] WHERE id = @id AND company_id = @company_id AND voucher_type = N'salary_advance';
+    IF @employee_id IS NULL OR @loan_id IS NOT NULL OR ISNULL(@amount, 0) <= 0
+        RETURN;
+
+    EXEC [pay].[usp_pay_item_system_ensure] @company_id = @company_id;
+    DECLARE @loan_item BIGINT = (SELECT id FROM [pay].[pay_item] WHERE company_id = @company_id AND system_code = N'loan_deduction');
+
+    DECLARE @type_id BIGINT, @n INT, @gap INT;
+    SELECT @type_id = id, @n = installments, @gap = gap_between_installments_months
+    FROM [loan].[loan_type] WHERE company_id = @company_id AND name = N'Salary Advance';
+    IF @type_id IS NULL
+    BEGIN
+        INSERT [loan].[loan_type] (company_id, name, is_active, guarantor_required, non_payable, min_experience_months,
+                                   installments, gap_between_installments_months, deduction_pay_item_id, description, created_by)
+        VALUES (@company_id, N'Salary Advance', 0, 0, 0, 0, 1, 1, @loan_item,
+                N'Recovery of salary advances paid by employee voucher (Payroll > Vouchers): No. of Installments and the gap '
+                + N'between them set how it is taken from salary. Off, so Loan & Advance requests do not offer it.', @actor_user_id);
+        SET @type_id = SCOPE_IDENTITY();
+    END
+    SET @n = ISNULL(NULLIF(@n, 0), 1);
+    SET @gap = ISNULL(NULLIF(@gap, 0), 1);
+
+    DECLARE @start DATE = DATEFROMPARTS(YEAR(@date), MONTH(@date), 1), @guard INT = 0;
+    WHILE [pay].[fn_month_locked](@employee_id, @start) = 1 AND @guard < 120
+    BEGIN
+        SET @start = DATEADD(MONTH, 1, @start);
+        SET @guard += 1;
+    END
+
+    DECLARE @each DECIMAL(18,2) = ROUND(@amount / @n, 2, 1);
+    INSERT [loan].[loan] (company_id, employee_id, request_id, loan_type_id, principal, installment_amount, installments,
+                          gap_between_installments_months, currency, payment_method, start_month, status, created_by)
+    VALUES (@company_id, @employee_id, NULL, @type_id, @amount, @each, @n, @gap, @currency, @method, @start, N'active', @actor_user_id);
+    SET @loan_id = SCOPE_IDENTITY();
+    WITH k AS (SELECT TOP (@n) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS no FROM sys.all_objects)
+    INSERT [loan].[loan_installment] (loan_id, installment_no, due_month, amount, paid_amount, status, created_by)
+    SELECT @loan_id, k.no, DATEADD(MONTH, (k.no - 1) * @gap, @start),
+           CASE WHEN k.no = @n THEN @amount - @each * (@n - 1) ELSE @each END, 0, N'due', @actor_user_id
+    FROM k;
+
+    DECLARE @account BIGINT = (SELECT id FROM [pay].[account_type] WHERE company_id = @company_id AND name = N'Salary Advance');
+    IF @account IS NULL
+    BEGIN
+        DECLARE @code NVARCHAR(30);
+        EXEC [pay].[usp_sequence_next] @company_id, N'ACT-', 4, @code OUTPUT;
+        INSERT [pay].[account_type] (company_id, code, category, ref_id, name, created_by)
+        VALUES (@company_id, @code, N'custom_pay_item', @loan_item, N'Salary Advance', @actor_user_id);
+        SET @account = SCOPE_IDENTITY();
+    END
+    INSERT [pay].[employee_account_entry] (employee_id, account_type_id, entry_month, credit, debit, is_processed, voucher_id,
+                                           description, created_by)
+    VALUES (@employee_id, @account, DATEFROMPARTS(YEAR(@date), MONTH(@date), 1), 0, @amount, 1, @id,
+            CONCAT(N'Salary advance ', @no, N' paid; recovered from salary from ', DATENAME(MONTH, @start), N' ', YEAR(@start),
+                   CASE WHEN @n > 1 THEN CONCAT(N' in ', @n, N' installments') ELSE N'' END), @actor_user_id);
+
+    UPDATE [pay].[voucher] SET loan_id = @loan_id WHERE id = @id;
+    INSERT [core].[audit_log] (entity_type, entity_id, action_name, performed_by_user_id, performed_at)
+    VALUES (N'loan.loan', @loan_id, N'create', @actor_user_id, SYSUTCDATETIME());
+END
+GO
+
+-- A Salary Advance voucher's installments a closed payroll or final settlement has just recovered (@paid: JSON
+-- array of loan_installment ids) are credited back to the account its payment was debited to. Internal.
+CREATE OR ALTER PROCEDURE [pay].[usp_voucher_advance_recovered]
+    @actor_user_id BIGINT = NULL,
+    @paid          NVARCHAR(MAX)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    INSERT [pay].[employee_account_entry] (employee_id, account_type_id, entry_month, credit, debit, is_processed, payslip_id,
+                                           voucher_id, description, created_by)
+    SELECT v.employee_id, d.account_type_id, ISNULL(p.payslip_month, DATEFROMPARTS(YEAR(i.due_month), MONTH(i.due_month), 1)),
+           ISNULL(i.paid_amount, i.amount), 0, 1, i.payslip_id, v.id,
+           CONCAT(N'Salary advance ', v.voucher_no, N' recovered from salary', CASE WHEN l.installments > 1
+                  THEN CONCAT(N' (installment ', i.installment_no, N' of ', l.installments, N')') ELSE N'' END),
+           @actor_user_id
+    FROM OPENJSON(@paid) j
+    JOIN [loan].[loan_installment] i ON i.id = TRY_CONVERT(BIGINT, j.[value])
+    JOIN [loan].[loan] l ON l.id = i.loan_id
+    JOIN [pay].[voucher] v ON v.loan_id = l.id
+    LEFT JOIN [pay].[payslip] p ON p.id = i.payslip_id
+    CROSS APPLY (SELECT TOP 1 a.account_type_id FROM [pay].[employee_account_entry] a WHERE a.voucher_id = v.id ORDER BY a.id) d
+    WHERE NOT EXISTS (SELECT 1 FROM [pay].[employee_account_entry] x WHERE x.voucher_id = v.id AND x.payslip_id = i.payslip_id
+                                                                      AND x.credit > 0);
+END
+GO
+
 -- approve / reject: pending -> approved / rejected, by the manager (Approval Web Flow).
--- verify: approved -> processed, by Finance (Verification). The decider is the caller's employee record.
+-- verify: approved -> processed, by Finance (Verification); refused (403 VOUCHER_SAME_PERSON) for whoever approved
+-- or raised the voucher. The decider is the caller's employee record. A Salary Advance is posted on verify.
 -- Publishes payroll.voucher_decided and tells the employee.
 CREATE OR ALTER PROCEDURE [pay].[usp_voucher_decide]
     @company_id      BIGINT,
@@ -230,8 +340,12 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
-    DECLARE @rv BINARY(8), @status NVARCHAR(30), @employee_id BIGINT;
-    SELECT @rv = v.row_version, @status = v.status, @employee_id = v.employee_id FROM [pay].[voucher] v
+    DECLARE @rv BINARY(8), @status NVARCHAR(30), @employee_id BIGINT, @type NVARCHAR(30), @approver_user BIGINT,
+            @approver BIGINT, @creator BIGINT, @requester BIGINT;
+    SELECT @rv = v.row_version, @status = v.status, @employee_id = v.employee_id, @type = v.voucher_type,
+           @approver_user = v.decided_by_user_id, @approver = v.approved_by_id, @creator = v.created_by,
+           @requester = v.requested_by_id
+    FROM [pay].[voucher] v
     JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, @permission_code) x ON x.employee_id = v.employee_id
     WHERE v.id = @id AND v.company_id = @company_id;
     IF @rv IS NULL
@@ -246,6 +360,11 @@ BEGIN
     DECLARE @me BIGINT = (SELECT employee_id FROM [auth].[user_account] WHERE id = @actor_user_id);
     IF @me IS NOT NULL AND @me = @employee_id
         THROW 50403, N'You cannot decide your own voucher', 1;
+    -- Four eyes: the payment is released by someone who neither approved nor raised it.
+    IF @action = N'verify' AND (@approver_user = @actor_user_id OR (@me IS NOT NULL AND @me = @approver))
+        THROW 50403, N'status|VOUCHER_SAME_PERSON|You approved this voucher, so someone else must verify it for payment.', 1;
+    IF @action = N'verify' AND (@creator = @actor_user_id OR (@me IS NOT NULL AND @me = @requester))
+        THROW 50403, N'status|VOUCHER_SAME_PERSON|You raised this voucher, so someone else must verify it for payment.', 1;
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     DECLARE @new NVARCHAR(30) = CASE @action WHEN N'approve' THEN N'approved' WHEN N'reject' THEN N'rejected' ELSE N'processed' END;
 
@@ -262,6 +381,8 @@ BEGIN
         WHERE id = @id AND row_version = @row_version;
         INSERT [core].[audit_log] (entity_type, entity_id, field_name, old_value, new_value, action_name, performed_by_user_id, performed_at)
         VALUES (N'pay.voucher', @id, N'status', @status, @new, @action, @actor_user_id, @now);
+        IF @action = N'verify' AND @type = N'salary_advance'
+            EXEC [pay].[usp_voucher_advance_post] @company_id = @company_id, @actor_user_id = @actor_user_id, @id = @id;
 
         DECLARE @voucher_no NVARCHAR(30), @payload NVARCHAR(MAX);
         SELECT @voucher_no = v.voucher_no,

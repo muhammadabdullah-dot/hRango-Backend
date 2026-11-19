@@ -230,6 +230,11 @@ BEGIN
     IF [pay].[fn_month_locked_since](@emp, @date) = 1
         THROW 50409, N'effectiveDate|MONTH_LOCKED|A payroll from that month on is closed for this person.', 1;
     BEGIN TRAN;
+        -- An unsent letter is withdrawn, with the message waiting in the mail sender's queue.
+        DELETE m FROM [core].[mail_message] m
+        WHERE m.status = N'queued' AND m.id IN (SELECT o.mail_message_id FROM [pay].[mail_outbox] o
+                                               WHERE o.company_id = @company_id AND o.entity_type = N'hr.employee_salary'
+                                                 AND o.entity_id = @id AND o.status = N'queued');
         DELETE [pay].[mail_outbox] WHERE company_id = @company_id AND entity_type = N'hr.employee_salary' AND entity_id = @id
                                          AND status IN (N'disabled', N'queued');
         DELETE [hr].[employee_salary] WHERE id = @id;

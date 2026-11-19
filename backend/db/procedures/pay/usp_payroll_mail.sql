@@ -1,8 +1,10 @@
--- Payroll e-mails: the close e-mail of a monthly run and the salary revision letter. Mail is not set up
--- yet (app.core.mail.enabled() is false): requests are recorded with status 'disabled' and nothing is
--- sent. When it is, rows are recorded 'queued' in pay.mail_outbox and the mail sender (not built) marks
--- each one 'sent' or 'failed' and the run's pay.payroll_close_email 'sent' / 'failed'.
--- The subject and body are written by the API (app/services/payroll_mail_service.py) from these rows.
+-- Payroll e-mails: the close e-mail of a monthly run and the salary revision letter, one pay.mail_outbox row
+-- per person. With mail off (app.core.mail.enabled() false) a row is recorded 'disabled' and nothing is sent.
+-- With mail on it is recorded 'queued'; the API (app/services/payroll_mail_service.py) then writes each
+-- person's own message and queues it in core.mail_message (pay.usp_mail_outbox_hand_off links the two), and
+-- the mail worker's result for that message is copied back (pay.usp_mail_outbox_result): the row becomes
+-- 'sent' or 'failed', and the run's pay.payroll_close_email 'sent' (everyone) or 'failed' (anyone failed)
+-- once none of its rows is still queued.
 
 -- The close e-mail of a monthly run, before or after closing: what it is about and who gets it.
 CREATE OR ALTER PROCEDURE [pay].[usp_payroll_close_email_preview]
@@ -121,4 +123,97 @@ BEGIN
     COMMIT;
 
     SELECT @status AS status, CAST(NULL AS DATETIME2(0)) AS sent_at;
+END
+GO
+
+-- Rows of one close e-mail or letter still to hand to the mail sender: queued, no message queued for them yet.
+CREATE OR ALTER PROCEDURE [pay].[usp_mail_outbox_pending]
+    @company_id  BIGINT,
+    @entity_type NVARCHAR(50),
+    @entity_id   BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT o.id, o.entity_type, o.entity_id, o.employee_id, o.to_address, o.subject,
+           NULLIF(CONCAT_WS(N' ', e.first_name, e.last_name), N'') AS employee_name
+    FROM [pay].[mail_outbox] o
+    JOIN [hr].[employee] e ON e.id = o.employee_id
+    WHERE o.company_id = @company_id AND o.entity_type = @entity_type AND o.entity_id = @entity_id
+      AND o.status = N'queued' AND o.mail_message_id IS NULL
+    ORDER BY o.id;
+END
+GO
+
+-- A closed run's close e-mail state from its rows: 'queued' while any row waits, then 'failed' when anyone's
+-- failed, else 'sent' (sent_at: the last one sent). A run recorded 'disabled' (mail off) stays so.
+CREATE OR ALTER PROCEDURE [pay].[usp_payroll_close_email_refresh]
+    @payroll_id BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @queued INT, @sent INT, @failed INT, @last DATETIME2(0);
+    SELECT @queued = ISNULL(SUM(CASE WHEN status = N'queued' THEN 1 ELSE 0 END), 0),
+           @sent = ISNULL(SUM(CASE WHEN status = N'sent' THEN 1 ELSE 0 END), 0),
+           @failed = ISNULL(SUM(CASE WHEN status = N'failed' THEN 1 ELSE 0 END), 0), @last = MAX(sent_at)
+    FROM [pay].[mail_outbox] WHERE entity_type = N'pay.payroll' AND entity_id = @payroll_id;
+    UPDATE [pay].[payroll_close_email]
+    SET status = CASE WHEN @queued > 0 THEN N'queued' WHEN @failed > 0 THEN N'failed' ELSE N'sent' END,
+        sent_at = CASE WHEN @queued = 0 AND @sent > 0 THEN @last END, updated_at = SYSUTCDATETIME()
+    WHERE payroll_id = @payroll_id AND status IN (N'queued', N'sent', N'failed');
+END
+GO
+
+-- What handing one row to the mail sender gave: the message queued for it (@status 'queued'), mail switched off
+-- meanwhile ('disabled'), or refused before it could be queued ('failed' with @error, e.g. a bad address).
+CREATE OR ALTER PROCEDURE [pay].[usp_mail_outbox_hand_off]
+    @id              BIGINT,
+    @mail_message_id BIGINT = NULL,
+    @status          NVARCHAR(30),
+    @error           NVARCHAR(1000) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    DECLARE @type NVARCHAR(50), @entity BIGINT;
+    SELECT @type = entity_type, @entity = entity_id FROM [pay].[mail_outbox] WHERE id = @id;
+    IF @type IS NULL
+        THROW 50404, N'E-mail not found', 1;
+    BEGIN TRAN;
+        UPDATE [pay].[mail_outbox]
+        SET mail_message_id = @mail_message_id,
+            status = CASE WHEN @status IN (N'queued', N'disabled') THEN @status ELSE N'failed' END,
+            error = CASE WHEN @status IN (N'queued', N'disabled') THEN NULL ELSE LEFT(@error, 1000) END,
+            updated_at = SYSUTCDATETIME()
+        WHERE id = @id;
+        IF @type = N'pay.payroll'
+            EXEC [pay].[usp_payroll_close_email_refresh] @payroll_id = @entity;
+    COMMIT;
+END
+GO
+
+-- The mail worker's result for one message (app/core/mail.py calls it after core.usp_mail_result): copied to the
+-- row that names it, and to its run's close e-mail. A failure the worker will retry leaves the row 'queued' with
+-- the error; after the last attempt it is 'failed'.
+CREATE OR ALTER PROCEDURE [pay].[usp_mail_outbox_result]
+    @mail_message_id BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    DECLARE @status NVARCHAR(20), @sent_at DATETIME2(0), @error NVARCHAR(1000);
+    SELECT @status = status, @sent_at = sent_at, @error = error FROM [core].[mail_message] WHERE id = @mail_message_id;
+    IF @status IS NULL
+        RETURN;
+    DECLARE @payroll_id BIGINT = (SELECT TOP 1 entity_id FROM [pay].[mail_outbox]
+                                  WHERE mail_message_id = @mail_message_id AND entity_type = N'pay.payroll');
+    BEGIN TRAN;
+        UPDATE [pay].[mail_outbox]
+        SET status = CASE @status WHEN N'sent' THEN N'sent' WHEN N'failed' THEN N'failed' ELSE status END,
+            sent_at = CASE WHEN @status = N'sent' THEN @sent_at ELSE sent_at END,
+            error = CASE WHEN @status = N'sent' THEN NULL ELSE @error END,
+            updated_at = SYSUTCDATETIME()
+        WHERE mail_message_id = @mail_message_id AND status = N'queued';
+        IF @payroll_id IS NOT NULL
+            EXEC [pay].[usp_payroll_close_email_refresh] @payroll_id = @payroll_id;
+    COMMIT;
 END

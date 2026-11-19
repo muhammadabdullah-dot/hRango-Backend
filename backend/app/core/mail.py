@@ -117,4 +117,20 @@ def deliver_due(db: Db, batch: int = 20) -> int:
         except Exception as exc:  # noqa: BLE001 - every failure is recorded and retried
             log.warning("mail %s to %s failed: %s", row["id"], row["to_address"], exc)
             db.call("core.usp_mail_result", id=row["id"], ok=False, error=_error_text(exc))
+        _tell_owner(db, row)
     return len(rows)
+
+
+# Modules that keep their own record of a message's state: kind -> procedure taking @mail_message_id, called after
+# each result. Payroll: pay.mail_outbox and the run's close e-mail (app/services/payroll_mail_service.py).
+RESULT_OWNERS = {"payroll_close": "pay.usp_mail_outbox_result", "salary_revision": "pay.usp_mail_outbox_result"}
+
+
+def _tell_owner(db: Db, row: dict) -> None:
+    proc = RESULT_OWNERS.get(row["kind"])
+    if proc is None:
+        return
+    try:
+        db.call(proc, mail_message_id=row["id"])
+    except Exception:  # noqa: BLE001 - the message's own state is recorded; the owner's copy must not stop the pass
+        log.exception("mail %s: %s failed", row["id"], proc)

@@ -277,6 +277,9 @@ def get_payslip(id: int, db: Db = Depends(get_db), ctx: RequestContext = Depends
 @router.put("/payslips/{id}", response_model=Item[PayslipDetailOut])
 def edit_payslip(id: int, body: PayslipEditIn, db: Db = Depends(get_db),
                  ctx: RequestContext = Depends(require("payroll.payslips.edit"))):
+    """Edit Pay Slip: changes lines (marked Manually Updated), adds a one-off line for a pay item not on the slip
+    (optional `label`, e.g. "Test bonus") or removes one (`remove: true`); totals and net are worked out again.
+    Refused (409 PAYSLIP_LOCKED) on a released slip or a closed payroll."""
     return c.edit_payslip(db, ctx, id, body)
 
 

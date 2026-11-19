@@ -52,7 +52,7 @@ def test_close_email_and_bank_file(client, db, ctx):
     assert preview.status_code == 200, preview.text
     p = preview.json()["data"]
     assert p["enabled"] is False and p["recipientCount"] == 1
-    assert "July 2026" in p["subject"] and "<p>" in p["bodyHtml"]
+    assert "July 2026" in p["subject"] and "<p" in p["bodyHtml"] and "is ready" in p["bodyHtml"]
     before = client.get(f"{API}/payrolls/{run['id']}/close-email", headers=h).json()["data"]
     assert before["status"] == "none" and before["failures"] == []
 

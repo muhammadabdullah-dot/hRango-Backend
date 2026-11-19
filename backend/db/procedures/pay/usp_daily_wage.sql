@@ -1,7 +1,9 @@
 -- Payrolls -> Daily Wages: one run per day and time slot. Wages come from the day's time sheet:
 --   hourly rate x hours worked, daily rate x the day (half for a half day), or monthly salary / days in
 --   the month x the day. The rate is the person's salary (hr.employee_salary) read with their salary
---   frequency (hr.employee.salary_frequency).
+--   frequency (hr.employee.salary_frequency). Anyone may be paid by the day, but never for a day their
+--   monthly payroll already pays (pay.fn_day_paid_monthly): adding them is refused, processing leaves them out
+--   with the reason, and closing is refused while such a wage is in the run.
 
 -- Adds a daily-wage run (@id NULL) with its employees, or edits its name. Result: the run.
 CREATE OR ALTER PROCEDURE [pay].[usp_daily_wage_save]
@@ -101,6 +103,10 @@ BEGIN
     WHERE pe.payroll_id = @id;
 
     UPDATE @w SET error = N'No salary or wage rate on record.' WHERE rate IS NULL;
+    -- A day a monthly payroll already pays (someone added before that payroll included them): not paid twice.
+    UPDATE w SET error = CONCAT(N'Already paid for this day by the monthly payroll ', m.name, N' (', m.code, N').')
+    FROM @w w CROSS APPLY [pay].[fn_day_paid_monthly](w.employee_id, @work_date) m
+    WHERE w.error IS NULL;
     UPDATE @w SET error = N'No time sheet for the day.' WHERE error IS NULL AND has_day = 0;
     UPDATE @w SET wage = ROUND(CASE frequency
                                    WHEN N'hourly' THEN rate * worked_minutes / 60.0

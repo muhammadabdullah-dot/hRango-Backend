@@ -11,7 +11,10 @@ For each person:
      only when its eligibility expression is true and, for items given through a group benefit, when the
      person is a member. Amount = formula (calculation type "formula") + the person's inputs (fixed amounts,
      opening balances, loan installments, leave encashment) + benefit formulas. A line edited by hand keeps
-     its amount. The salary line uses the "How to Prorate Monthly" rounding when it is prorated.
+     its amount (and a one-off line added by hand its label). The salary line uses the "How to Prorate
+     Monthly" rounding when it is prorated. A final settlement in a month a closed monthly run already paid
+     leaves the salary out and deducts what that run paid for the days after the last working date
+     (Salary Recovery).
   3. Tax, from the payroll's tax structure (see monthly_tax).
   4. Rules: each rule's expression is posted to its employee account (credit when positive, debit when negative).
 """
@@ -258,6 +261,9 @@ def _employee(emp, header, ordered, tax_item, formulas, item_slugs, rules, input
         variables[k] = _d(emp[k])
     assert set(variables) == set(SYSTEM_VARIABLES)
 
+    # A settlement in a month a closed run already paid takes back the salary paid after the last working date.
+    recovery = _salary_recovery(emp, ordered, formulas, item_slugs, variables, start, end, month_days, settings) \
+        if is_fs and not include else ZERO
     values: dict[str, Decimal] = {}
     resolver = Resolver(variables, formulas, lambda s: values.get(s, ZERO) if s in item_slugs else None)
     manual_by_item = {r["pay_item_id"]: r for r in manual}
@@ -265,13 +271,14 @@ def _employee(emp, header, ordered, tax_item, formulas, item_slugs, rules, input
     lines: list[dict] = []
     recurring = oneoff_current = oneoff_spread = ZERO
 
-    def add_line(item: Item, amount: Decimal, employer: Decimal | None, is_manual: bool, oneoff_part: Decimal) -> None:
+    def add_line(item: Item, amount: Decimal, employer: Decimal | None, hand: dict | None, oneoff_part: Decimal) -> None:
         nonlocal recurring, oneoff_current, oneoff_spread
+        is_manual = hand is not None
         values[item.slug] = amount
         if amount == 0 and not employer and not is_manual:
             return
         lines.append({"payItemId": item.id, "amount": str(amount), "employerContribution": str(employer) if employer else None,
-                      "isTaxable": item.is_taxable, "isManual": is_manual})
+                      "isTaxable": item.is_taxable, "isManual": is_manual, **_hand_marks(hand)})
         if not item.is_taxable or item.id in display_only or item.item_type not in ("earning", "deduction"):
             return
         sign = 1 if item.item_type == "earning" else -1
@@ -295,6 +302,8 @@ def _employee(emp, header, ordered, tax_item, formulas, item_slugs, rules, input
             amount += sum((_d(r["amount"]) for r in own), ZERO)
             if item.system_code == "leave_encashment":
                 amount += fs_encash
+            if item.system_code == "salary_recovery":
+                amount += recovery
             for b in benefits:
                 if b["pay_item_id"] == item.id and b["expression"]:
                     amount += Expression(b["expression"]).evaluate(resolver)
@@ -309,13 +318,13 @@ def _employee(emp, header, ordered, tax_item, formulas, item_slugs, rules, input
         if hand is not None:
             amount = _d(hand["amount"])
             employer = _d(hand["employer_contribution"]) if hand["employer_contribution"] is not None else employer
-        add_line(item, amount, employer, hand is not None, oneoff_part)
+        add_line(item, amount, employer, hand, oneoff_part)
 
     for item_id, hand in manual_by_item.items():  # hand-edited lines of items not worked out above
         if not any(l["payItemId"] == item_id for l in lines) and (tax_item is None or item_id != tax_item.id):
             lines.append({"payItemId": item_id, "amount": str(_d(hand["amount"])),
                           "employerContribution": str(hand["employer_contribution"]) if hand["employer_contribution"] is not None else None,
-                          "isTaxable": False, "isManual": True})
+                          "isTaxable": False, "isManual": True, **_hand_marks(hand)})
 
     taxable = recurring + oneoff_current + oneoff_spread
     if tax_item is not None:
@@ -334,7 +343,7 @@ def _employee(emp, header, ordered, tax_item, formulas, item_slugs, rules, input
         values[tax_item.slug] = tax
         if tax or hand is not None:
             lines.append({"payItemId": tax_item.id, "amount": str(tax), "employerContribution": None, "isTaxable": False,
-                          "isManual": hand is not None})
+                          "isManual": hand is not None, **_hand_marks(hand)})
 
     postings = []
     for rule, expr in rules:
@@ -356,3 +365,30 @@ def _employee(emp, header, ordered, tax_item, formulas, item_slugs, rules, input
 
 def _months_between(a: date, b: date) -> int:
     return (b.year - a.year) * 12 + b.month - a.month - (1 if b.day < a.day else 0)
+
+
+def _hand_marks(hand: dict | None) -> dict:
+    """What a line edited or added by hand keeps across a recalculation: a one-off line's label and mark."""
+    if hand is None:
+        return {}
+    return {"label": hand.get("label"), "isOneOff": bool(hand.get("is_one_off"))}
+
+
+def _salary_recovery(emp, ordered, formulas, item_slugs, variables, start: date, end: date, month_days: int,
+                     settings: RunSettings) -> Decimal:
+    """Final settlement whose month a closed monthly run already paid (salary_paid): the salary it paid for the days
+    after the last working date, i.e. what it paid less the month's salary up to that date (the Salary item worked
+    out for the days employed in the month, without the attendance the monthly run already counted). 0 when the run
+    paid no more than that (it knew the last working date)."""
+    paid = _d(emp.get("salary_paid"))
+    if paid <= 0:
+        return ZERO
+    days = Decimal(max(0, (end - start).days + 1))
+    salary = next((i for i in ordered if i.system_code == "salary"), None)
+    due_vars = {**variables, "employed_days": days, "worked_days": days}
+    if salary is not None and salary.expression is not None:
+        due = salary.expression.evaluate(Resolver(due_vars, formulas, lambda s: ZERO if s in item_slugs else None))
+    else:
+        due = _d(emp["gross_salary"]) * days / month_days
+    due = round_money(due, settings.proration_rounding) if days < month_days else due.quantize(CENT)
+    return max(ZERO, paid - due).quantize(CENT)

@@ -52,7 +52,7 @@ BEGIN
            emp.status AS employee_status, emp.salary_frequency, emp.branch_id, emp.department_id, emp.designation_id,
            emp.grade_id, emp.employment_type_id, emp.employee_group_id, emp.location_id,
            sal.amount AS gross_salary, ep.joining_date, ep.end_date AS employment_end_date,
-           eoe.last_working_date, e.period_start, e.period_end, e.month_start, e.month_end, e.include_salary,
+           eoe.last_working_date, e.period_start, e.period_end, e.month_start, e.month_end, e.include_salary, e.salary_paid,
            CASE WHEN EXISTS (SELECT 1 FROM [hr].[employee_bank_account] ba WHERE ba.employee_id = e.employee_id)
                 THEN N'bank' ELSE N'cash' END AS payment_method,
            ISNULL(ts.present_days, 0) AS present_days, ISNULL(ts.absent_days, 0) AS absent_days,
@@ -108,15 +108,21 @@ BEGIN
           AND ISNULL(w.deduction, N'payroll') IN (N'payroll', N'both')
           AND (w.payslip_id IS NULL OR w.payslip_id = e.payslip_id)) pen
     OUTER APPLY (
-        SELECT SUM(CASE WHEN b.balance <= 0 THEN 0
-                        WHEN lt.encashment_min IS NOT NULL AND b.balance < lt.encashment_min THEN 0
-                        WHEN lt.encashment_max IS NOT NULL AND b.balance > lt.encashment_max THEN lt.encashment_max
-                        ELSE b.balance END) AS days
+        -- Encashable balance of the last leave year, within the type's limits; the Max Limit is per person a year,
+        -- so days already encashed that year come off it (pay.fn_encashed_days).
+        SELECT SUM(CASE WHEN c.days <= 0 THEN 0
+                        WHEN lt.encashment_min IS NOT NULL AND c.days < lt.encashment_min THEN 0
+                        ELSE c.days END) AS days
         FROM [lv].[leave_type] lt
+        CROSS APPLY (SELECT MAX(l2.fiscal_year) AS fiscal_year FROM [lv].[leave_ledger] l2
+                     WHERE l2.employee_id = e.employee_id AND l2.leave_type_id = lt.id) fy
         CROSS APPLY (SELECT SUM(l.days) AS balance FROM [lv].[leave_ledger] l
-                     WHERE l.employee_id = e.employee_id AND l.leave_type_id = lt.id
-                       AND l.fiscal_year = (SELECT MAX(l2.fiscal_year) FROM [lv].[leave_ledger] l2
-                                            WHERE l2.employee_id = e.employee_id AND l2.leave_type_id = lt.id)) b
+                     WHERE l.employee_id = e.employee_id AND l.leave_type_id = lt.id AND l.fiscal_year = fy.fiscal_year) b
+        CROSS APPLY (SELECT [pay].[fn_encashed_days](e.employee_id, lt.id, fy.fiscal_year, NULL) AS already) a
+        CROSS APPLY (SELECT CASE WHEN b.balance IS NULL OR b.balance <= 0 THEN 0
+                                 WHEN lt.encashment_max IS NOT NULL AND b.balance > lt.encashment_max - a.already
+                                      THEN lt.encashment_max - a.already
+                                 ELSE b.balance END AS days) c
         WHERE lt.company_id = @company_id AND lt.allow_encashment = 1) enc
     ORDER BY e.employee_id;
 
@@ -170,8 +176,8 @@ BEGIN
                   WHERE m.reward_benefit_id = b.id
                     AND (m.employee_id = e.employee_id OR (m.employee_group_id IS NOT NULL AND m.employee_group_id = emp.employee_group_id)));
 
-    -- 8. Lines someone edited by hand: kept as they are.
-    SELECT e.employee_id, l.pay_item_id, l.amount, l.employer_contribution
+    -- 8. Lines someone edited or added by hand: kept as they are (a one-off line with its own label).
+    SELECT e.employee_id, l.pay_item_id, l.amount, l.employer_contribution, l.label, l.is_one_off
     FROM #emp e
     JOIN [pay].[payslip_line] l ON l.payslip_id = e.payslip_id AND l.is_manually_updated = 1;
 
@@ -218,7 +224,8 @@ BEGIN
         WHERE company_id = @company_id AND module = N'payroll' AND setting_key = N'exclude_final_settlement') = N'true' THEN 1 ELSE 0 END;
 
     CREATE TABLE #emp (employee_id BIGINT PRIMARY KEY, period_start DATE, period_end DATE, month_start DATE, month_end DATE,
-                       payslip_id BIGINT NULL, include_salary BIT, loans_all BIT, encash_balance BIT, skip_reason NVARCHAR(400) NULL);
+                       payslip_id BIGINT NULL, include_salary BIT, loans_all BIT, encash_balance BIT, skip_reason NVARCHAR(400) NULL,
+                       salary_paid DECIMAL(18,2) NULL);
     CREATE TABLE #items (pay_item_id BIGINT PRIMARY KEY, is_taxable BIT, calculate_only BIT);
 
     INSERT #emp (employee_id, period_start, period_end, month_start, month_end, payslip_id, include_salary, loans_all, encash_balance)
@@ -343,11 +350,14 @@ BEGIN
         UPDATE p SET payslip_id = s.id FROM #ps p JOIN [pay].[payslip] s ON s.payroll_id = @id AND s.employee_id = p.employee_id;
 
         DELETE l FROM [pay].[payslip_line] l JOIN #ps p ON p.payslip_id = l.payslip_id;
-        INSERT [pay].[payslip_line] (payslip_id, pay_item_id, amount, employer_contribution, is_taxable, is_manually_updated, created_by)
-        SELECT p.payslip_id, j.pay_item_id, j.amount, j.employer_contribution, ISNULL(j.is_taxable, 0), ISNULL(j.is_manual, 0), @actor_user_id
+        INSERT [pay].[payslip_line] (payslip_id, pay_item_id, amount, employer_contribution, is_taxable, is_manually_updated, label,
+                                     is_one_off, created_by)
+        SELECT p.payslip_id, j.pay_item_id, j.amount, j.employer_contribution, ISNULL(j.is_taxable, 0), ISNULL(j.is_manual, 0),
+               j.label, ISNULL(j.is_one_off, 0), @actor_user_id
         FROM #ps p
         CROSS APPLY OPENJSON(p.lines) WITH (pay_item_id BIGINT '$.payItemId', amount DECIMAL(18,2) '$.amount',
-             employer_contribution DECIMAL(18,2) '$.employerContribution', is_taxable BIT '$.isTaxable', is_manual BIT '$.isManual') j;
+             employer_contribution DECIMAL(18,2) '$.employerContribution', is_taxable BIT '$.isTaxable', is_manual BIT '$.isManual',
+             label NVARCHAR(100) '$.label', is_one_off BIT '$.isOneOff') j;
 
         DELETE a FROM [pay].[employee_account_entry] a JOIN #ps p ON p.payslip_id = a.payslip_id WHERE a.pay_rule_id IS NOT NULL;
         INSERT [pay].[employee_account_entry] (employee_id, account_type_id, entry_month, credit, debit, is_processed, payslip_id,

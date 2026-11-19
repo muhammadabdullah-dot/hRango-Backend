@@ -147,7 +147,9 @@ BEGIN
         BEGIN
             EXEC [pay].[usp_pay_item_system_ensure] @company_id = @company_id;
             DELETE @items;
-            INSERT @items SELECT id, is_taxable, 0, 0, 0 FROM [pay].[pay_item] WHERE company_id = @company_id;
+            -- Every pay item, except Salary Recovery, which only a final settlement works out.
+            INSERT @items SELECT id, is_taxable, 0, 0, 0 FROM [pay].[pay_item]
+            WHERE company_id = @company_id AND ISNULL(system_code, N'') <> N'salary_recovery';
         END
         BEGIN TRAN;
             EXEC [pay].[usp_sequence_next] @company_id, N'PR-', 5, @code OUTPUT;
@@ -320,6 +322,23 @@ BEGIN
         SET @clash = N'employeeIds|PAYROLL_EMPLOYEE_CONFLICT|' + @clash;
         THROW 50409, @clash, 1;
     END
+    -- Daily wages: not for a day a monthly payroll already pays the person (pay.fn_day_paid_monthly).
+    IF @kind = N'daily_wage'
+    BEGIN
+        DECLARE @paid NVARCHAR(400) = (
+            SELECT TOP 1 CONCAT(e.first_name, N' ', e.last_name, N' is already paid for ',
+                                FORMAT(@work_date, N'd MMMM yyyy', N'en-GB'), N' by the monthly payroll ', m.name,
+                                N' (', m.code, N').')
+            FROM @ids i
+            CROSS APPLY [pay].[fn_day_paid_monthly](i.employee_id, @work_date) m
+            JOIN [hr].[employee] e ON e.id = i.employee_id
+            ORDER BY e.first_name, e.last_name);
+        IF @paid IS NOT NULL
+        BEGIN
+            SET @paid = N'employeeIds|PAID_BY_MONTHLY_PAYROLL|' + @paid;
+            THROW 50409, @paid, 1;
+        END
+    END
 
     IF @mode = N'replace' AND EXISTS (
         SELECT 1 FROM [pay].[payslip] ps
@@ -382,13 +401,20 @@ BEGIN
            CASE WHEN EXISTS (SELECT 1 FROM [pay].[payroll_employee] o
                              JOIN [pay].[payroll] op ON op.id = o.payroll_id AND op.kind = @kind AND o.payroll_id <> @id
                                   AND ((@kind = N'monthly' AND op.payroll_month = @month) OR (@kind = N'daily_wage' AND op.work_date = @work_date))
-                             WHERE o.employee_id = e.id) THEN 1 ELSE 0 END
+                             WHERE o.employee_id = e.id)
+                  -- Daily wages: a day the person's monthly payroll already pays.
+                  OR (@kind = N'daily_wage' AND EXISTS (SELECT 1 FROM [pay].[fn_day_paid_monthly](e.id, @work_date)))
+                THEN 1 ELSE 0 END
     FROM [hr].[employee] e
     JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, @permission_code) v ON v.employee_id = e.id
     OUTER APPLY (SELECT TOP 1 joining_date FROM [hr].[employment_period] x WHERE x.employee_id = e.id ORDER BY x.joining_date DESC) ep
     WHERE e.company_id = @company_id
-      AND (@employee_status IS NULL OR e.status = @employee_status)
-      AND (@employee_status IS NOT NULL OR e.status <> N'left')
+      -- Active = employed (active, probation, notice): "Add Matching" sends it, and people on probation are paid
+      -- too. Inactive = switched off or left; any other value is one status; none = everyone but leavers.
+      AND (   (@employee_status IS NULL AND e.status <> N'left')
+           OR (@employee_status = N'active' AND e.status IN (N'active', N'probation', N'notice'))
+           OR (@employee_status = N'inactive' AND e.status IN (N'inactive', N'left'))
+           OR (@employee_status NOT IN (N'active', N'inactive') AND e.status = @employee_status))
       AND (@branch_id IS NULL OR e.branch_id = @branch_id)
       AND (@department_id IS NULL OR e.department_id = @department_id)
       AND (@designation_id IS NULL OR e.designation_id = @designation_id)

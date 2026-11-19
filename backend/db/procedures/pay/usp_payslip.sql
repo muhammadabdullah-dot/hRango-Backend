@@ -48,7 +48,11 @@ BEGIN
       AND (@employee_id IS NULL OR p.employee_id = @employee_id)
       AND (@branch_id IS NULL OR e.branch_id = @branch_id)
       AND (@department_id IS NULL OR e.department_id = @department_id)
-      AND (@employee_status IS NULL OR e.status = @employee_status)
+      -- Active = employed (active, probation, notice); inactive = switched off or left; else one status.
+      AND (@employee_status IS NULL
+           OR (@employee_status = N'active' AND e.status IN (N'active', N'probation', N'notice'))
+           OR (@employee_status = N'inactive' AND e.status IN (N'inactive', N'left'))
+           OR (@employee_status NOT IN (N'active', N'inactive') AND e.status = @employee_status))
       AND (@final_settlement IS NULL OR p.is_final_settlement = @final_settlement)
       AND (@earnings_from IS NULL OR p.total_earnings >= @earnings_from) AND (@earnings_to IS NULL OR p.total_earnings <= @earnings_to)
       AND (@deductions_from IS NULL OR p.total_deductions >= @deductions_from) AND (@deductions_to IS NULL OR p.total_deductions <= @deductions_to)
@@ -117,7 +121,7 @@ BEGIN
 
     SELECT ln.id, ln.pay_item_id, pi.name AS pay_item_name, pi.label AS pay_item_label, pi.item_type, pi.system_code,
            ln.amount, ln.employer_contribution, ln.is_taxable, ln.is_manually_updated, pi.is_display_only,
-           CAST(ISNULL(ppi.calculate_only, 0) AS BIT) AS calculate_only
+           CAST(ISNULL(ppi.calculate_only, 0) AS BIT) AS calculate_only, ln.label, ln.is_one_off
     FROM [pay].[payslip_line] ln
     JOIN [pay].[payslip] p ON p.id = ln.payslip_id
     JOIN [pay].[pay_item] pi ON pi.id = ln.pay_item_id
@@ -128,9 +132,11 @@ BEGIN
 END
 GO
 
--- Edits payslip lines by hand (Pay Slip Edit). @lines: JSON [{"payItemId","amount","employerContribution"}].
--- Each changed line is marked Manually Updated, kept by Recalculate, and written to the change log.
--- Not on a released slip or a closed run.
+-- Edits payslip lines by hand (Pay Slip Edit). @lines: JSON [{"payItemId","amount","employerContribution","label",
+-- "remove"}]. Each changed line is marked Manually Updated, kept by Recalculate, and written to the change log.
+-- A pay item not on the slip yet is added as a one-off line (is_one_off, with its own "label" if given, e.g.
+-- "Test bonus"); "remove": true takes a one-off line off again (lines the run worked out cannot be removed, only
+-- set to 0). Totals and net payable are worked out again. Not on a released slip or a closed run.
 CREATE OR ALTER PROCEDURE [pay].[usp_payslip_lines_save]
     @company_id      BIGINT,
     @actor_user_id   BIGINT,
@@ -158,35 +164,59 @@ BEGIN
     IF @kind = N'daily_wage'
         THROW 50400, N'Daily wages are edited on the daily wages payroll.', 1;
 
-    DECLARE @in TABLE (pay_item_id BIGINT PRIMARY KEY, amount DECIMAL(18,2), employer_contribution DECIMAL(18,2));
-    INSERT @in SELECT pay_item_id, amount, employer_contribution
+    DECLARE @in TABLE (pay_item_id BIGINT PRIMARY KEY, amount DECIMAL(18,2), employer_contribution DECIMAL(18,2),
+                       label NVARCHAR(100), is_removed BIT);
+    INSERT @in SELECT pay_item_id, amount, employer_contribution, NULLIF(LTRIM(RTRIM(label)), N''), ISNULL(is_removed, 0)
     FROM OPENJSON(@lines) WITH (pay_item_id BIGINT '$.payItemId', amount DECIMAL(18,2) '$.amount',
-                                employer_contribution DECIMAL(18,2) '$.employerContribution');
+                                employer_contribution DECIMAL(18,2) '$.employerContribution', label NVARCHAR(100) '$.label',
+                                is_removed BIT '$.remove');
     IF EXISTS (SELECT 1 FROM @in i WHERE NOT EXISTS (SELECT 1 FROM [pay].[pay_item] pi WHERE pi.id = i.pay_item_id AND pi.company_id = @company_id))
         THROW 50400, N'lines|A pay item was not found.', 1;
+    IF EXISTS (SELECT 1 FROM @in i WHERE i.is_removed = 1 AND NOT EXISTS (
+                   SELECT 1 FROM [pay].[payslip_line] ln WHERE ln.payslip_id = @id AND ln.pay_item_id = i.pay_item_id))
+        THROW 50400, N'lines|That line is not on the payslip.', 1;
+    DECLARE @fixed NVARCHAR(400) = (
+        SELECT TOP 1 CONCAT(N'lines|LINE_NOT_ONE_OFF|', ISNULL(pi.label, pi.name),
+                            N' was worked out by the payroll, so it cannot be removed. Set it to 0 instead.')
+        FROM @in i
+        JOIN [pay].[payslip_line] ln ON ln.payslip_id = @id AND ln.pay_item_id = i.pay_item_id AND ln.is_one_off = 0
+        JOIN [pay].[pay_item] pi ON pi.id = i.pay_item_id
+        WHERE i.is_removed = 1);
+    IF @fixed IS NOT NULL
+        THROW 50400, @fixed, 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;
         INSERT [core].[audit_log] (entity_type, entity_id, field_name, old_value, new_value, action_name, performed_by_user_id, performed_at)
-        SELECT N'pay.payslip', @id, pi.name, CONVERT(NVARCHAR(40), ln.amount), CONVERT(NVARCHAR(40), i.amount),
-               CASE WHEN ln.id IS NULL THEN N'add' ELSE N'update' END, @actor_user_id, @now
+        SELECT N'pay.payslip', @id, pi.name, CONVERT(NVARCHAR(40), ln.amount),
+               CASE WHEN i.is_removed = 1 THEN NULL ELSE CONVERT(NVARCHAR(40), i.amount) END,
+               CASE WHEN i.is_removed = 1 THEN N'remove' WHEN ln.id IS NULL THEN N'add' ELSE N'update' END, @actor_user_id, @now
         FROM @in i
         JOIN [pay].[pay_item] pi ON pi.id = i.pay_item_id
         LEFT JOIN [pay].[payslip_line] ln ON ln.payslip_id = @id AND ln.pay_item_id = i.pay_item_id
-        WHERE ln.id IS NULL OR ln.amount <> i.amount OR ISNULL(ln.employer_contribution, 0) <> ISNULL(i.employer_contribution, ISNULL(ln.employer_contribution, 0));
+        WHERE ln.id IS NULL OR i.is_removed = 1 OR ln.amount <> i.amount
+           OR ISNULL(ln.employer_contribution, 0) <> ISNULL(i.employer_contribution, ISNULL(ln.employer_contribution, 0))
+           OR (ln.is_one_off = 1 AND ISNULL(ln.label, N'') <> ISNULL(i.label, N''));
+
+        DELETE ln FROM [pay].[payslip_line] ln JOIN @in i ON i.pay_item_id = ln.pay_item_id AND i.is_removed = 1
+        WHERE ln.payslip_id = @id AND ln.is_one_off = 1;
 
         UPDATE ln SET amount = i.amount, employer_contribution = ISNULL(i.employer_contribution, ln.employer_contribution),
+               label = CASE WHEN ln.is_one_off = 1 THEN i.label ELSE ln.label END,
                is_manually_updated = 1, updated_at = @now, updated_by = @actor_user_id
-        FROM [pay].[payslip_line] ln JOIN @in i ON i.pay_item_id = ln.pay_item_id
+        FROM [pay].[payslip_line] ln JOIN @in i ON i.pay_item_id = ln.pay_item_id AND i.is_removed = 0
         WHERE ln.payslip_id = @id
-          AND (ln.amount <> i.amount OR ISNULL(ln.employer_contribution, 0) <> ISNULL(i.employer_contribution, ISNULL(ln.employer_contribution, 0)));
+          AND (ln.amount <> i.amount OR ISNULL(ln.employer_contribution, 0) <> ISNULL(i.employer_contribution, ISNULL(ln.employer_contribution, 0))
+               OR (ln.is_one_off = 1 AND ISNULL(ln.label, N'') <> ISNULL(i.label, N'')));
 
-        INSERT [pay].[payslip_line] (payslip_id, pay_item_id, amount, employer_contribution, is_taxable, is_manually_updated, created_by)
+        -- A pay item not on the slip yet: a one-off line added by hand.
+        INSERT [pay].[payslip_line] (payslip_id, pay_item_id, amount, employer_contribution, is_taxable, is_manually_updated,
+                                     label, is_one_off, created_by)
         SELECT @id, i.pay_item_id, i.amount, i.employer_contribution,
                ISNULL((SELECT ppi.is_taxable FROM [pay].[payroll_pay_item] ppi WHERE ppi.payroll_id = @payroll_id AND ppi.pay_item_id = i.pay_item_id),
-                      (SELECT pi.is_taxable FROM [pay].[pay_item] pi WHERE pi.id = i.pay_item_id)), 1, @actor_user_id
+                      (SELECT pi.is_taxable FROM [pay].[pay_item] pi WHERE pi.id = i.pay_item_id)), 1, i.label, 1, @actor_user_id
         FROM @in i
-        WHERE NOT EXISTS (SELECT 1 FROM [pay].[payslip_line] ln WHERE ln.payslip_id = @id AND ln.pay_item_id = i.pay_item_id);
+        WHERE i.is_removed = 0 AND NOT EXISTS (SELECT 1 FROM [pay].[payslip_line] ln WHERE ln.payslip_id = @id AND ln.pay_item_id = i.pay_item_id);
 
         EXEC [pay].[usp_payslip_totals_refresh] @payslip_id = @id;
         UPDATE [pay].[payslip] SET updated_by = @actor_user_id WHERE id = @id;
@@ -282,6 +312,9 @@ GO
 
 -- The Employee Accounts panel (Provident Fund, EOBI, outstanding loans and advances) for one person
 -- (@employee_id; the caller's own when NULL). Result set 1: the person. 2: balance per account.
+-- Advances paid: what is left to recover of verified Salary Advance vouchers (the whole amount of one verified
+-- before advances were recovered); their loans are not counted again in the outstanding loan, nor their account
+-- (the Salary Advance account the payments are debited to) listed again among the balances.
 CREATE OR ALTER PROCEDURE [pay].[usp_employee_account_summary]
     @company_id      BIGINT,
     @actor_user_id   BIGINT,
@@ -299,8 +332,11 @@ BEGIN
     SELECT e.id AS employee_id, e.code AS employee_code, CONCAT(e.first_name, N' ', e.last_name) AS employee_name,
            (SELECT SUM(i.amount - ISNULL(i.paid_amount, 0)) FROM [loan].[loan_installment] i
             JOIN [loan].[loan] l ON l.id = i.loan_id AND l.status = N'active'
-            WHERE l.employee_id = e.id AND ISNULL(i.status, N'') <> N'paid') AS outstanding_loan,
-           (SELECT SUM(v.amount) FROM [pay].[voucher] v
+            WHERE l.employee_id = e.id AND ISNULL(i.status, N'') <> N'paid'
+              AND NOT EXISTS (SELECT 1 FROM [pay].[voucher] v WHERE v.loan_id = l.id)) AS outstanding_loan,
+           (SELECT SUM(CASE WHEN v.loan_id IS NULL THEN v.amount ELSE ISNULL(o.left_amount, 0) END) FROM [pay].[voucher] v
+            OUTER APPLY (SELECT SUM(i.amount - ISNULL(i.paid_amount, 0)) AS left_amount FROM [loan].[loan_installment] i
+                         WHERE i.loan_id = v.loan_id AND ISNULL(i.status, N'') <> N'paid') o
             WHERE v.employee_id = e.id AND v.voucher_type = N'salary_advance' AND v.status = N'processed') AS advances_paid
     FROM [hr].[employee] e WHERE e.id = @employee_id;
 
@@ -309,6 +345,8 @@ BEGIN
     FROM [pay].[employee_account_entry] a
     JOIN [pay].[account_type] t ON t.id = a.account_type_id
     WHERE a.employee_id = @employee_id
+      AND NOT EXISTS (SELECT 1 FROM [pay].[employee_account_entry] x
+                      WHERE x.employee_id = a.employee_id AND x.account_type_id = a.account_type_id AND x.voucher_id IS NOT NULL)
     GROUP BY a.account_type_id, t.name, t.category
     ORDER BY t.name;
 END

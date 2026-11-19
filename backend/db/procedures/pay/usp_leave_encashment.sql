@@ -82,7 +82,8 @@ GO
 
 -- Adds an encashment (@id NULL) or redoes one nobody has been paid for yet. Days are each person's balance
 -- of the leave type for @fiscal_year (lv.fn_leave_balance's available days; when redoing, the ledger sum
--- with this encashment given back), within the type's encashment minimum and maximum. The rate per day is
+-- with this encashment given back), within the type's encashment minimum and maximum. The maximum is per
+-- person a year: days already encashed that year (pay.fn_encashed_days) come off it. The rate per day is
 -- @amount_per_leave, or for basis 'earned_salary' with no amount, a day's salary (monthly salary / 30).
 CREATE OR ALTER PROCEDURE [pay].[usp_leave_encashment_save]
     @company_id       BIGINT,
@@ -122,7 +123,8 @@ BEGIN
             THROW 50409, N'status|ENCASHMENT_PAID|This encashment was paid through payroll. It cannot be changed', 1;
     END
 
-    CREATE TABLE #b (employee_id BIGINT PRIMARY KEY, balance DECIMAL(6,2), salary DECIMAL(18,2));
+    CREATE TABLE #b (employee_id BIGINT PRIMARY KEY, balance DECIMAL(6,2), salary DECIMAL(18,2), already DECIMAL(6,2),
+                     days DECIMAL(6,2));
     IF @all_employees = 1
         INSERT #b (employee_id)
         SELECT e.id FROM [hr].[employee] e
@@ -158,16 +160,25 @@ BEGIN
         OUTER APPLY [lv].[fn_leave_balance](@company_id, b.employee_id, @leave_type_id, @year_start) lb;
     END
 
-    -- Below the type's minimum: left out. Above its maximum: paid for the maximum.
-    DECLARE @under_min INT = (SELECT COUNT(*) FROM #b WHERE balance > 0 AND @min IS NOT NULL AND balance < @min),
-            @no_salary INT = (SELECT COUNT(*) FROM #b WHERE balance > 0 AND salary IS NULL AND @amount_per_leave IS NULL);
-    DELETE #b WHERE balance <= 0 OR (@min IS NOT NULL AND balance < @min);
-    UPDATE #b SET balance = @max WHERE @max IS NOT NULL AND balance > @max;
+    -- The Max Limit is days per person a year: what earlier encashments of the year took comes off it, and only the
+    -- rest is paid. Below the Min Limit (after that): left out.
+    UPDATE #b SET already = [pay].[fn_encashed_days](employee_id, @leave_type_id, @fiscal_year, @id);
+    UPDATE #b SET days = CASE WHEN @max IS NOT NULL AND balance > @max - already
+                              THEN CASE WHEN @max - already > 0 THEN @max - already ELSE 0 END
+                              ELSE balance END;
+    DECLARE @under_min INT = (SELECT COUNT(*) FROM #b WHERE balance > 0 AND days > 0 AND @min IS NOT NULL AND days < @min),
+            @at_max INT = (SELECT COUNT(*) FROM #b WHERE balance > 0 AND days <= 0),
+            @no_salary INT = (SELECT COUNT(*) FROM #b WHERE days > 0 AND salary IS NULL AND @amount_per_leave IS NULL);
+    DELETE #b WHERE balance <= 0 OR days <= 0 OR (@min IS NOT NULL AND days < @min);
+    UPDATE #b SET balance = days;
     IF @amount_per_leave IS NULL
         DELETE #b WHERE salary IS NULL;
     IF NOT EXISTS (SELECT 1 FROM #b)
     BEGIN
         DECLARE @nobody NVARCHAR(400) = CASE
+            WHEN @at_max > 0 AND @under_min = 0 THEN CONCAT(N'employeeIds|Nobody chosen can encash more: the maximum of ',
+                                            FORMAT(@max, N'0.##'), N' days of this leave type for ', @fiscal_year,
+                                            N' has already been encashed.')
             WHEN @under_min > 0 THEN CONCAT(N'employeeIds|Nobody chosen has the minimum of ', FORMAT(@min, N'0.##'),
                                             N' days of this leave type to encash.')
             WHEN @no_salary > 0 THEN N'employeeIds|Nobody chosen has a salary to work the amount out from.'
@@ -304,20 +315,28 @@ BEGIN
         OUTER APPLY [lv].[fn_leave_balance](@company_id, b.employee_id, @leave_type_id, @year_start) lb;
     END
 
-    SELECT x.employee_id, x.employee_name, x.available_days, x.encashable_days, x.capped_by,
-           CAST(ROUND(x.encashable_days * ISNULL(@amount_per_leave, ISNULL(x.salary, 0) / 30.0), 2) AS DECIMAL(18,2)) AS amount
+    -- The Max Limit is per person a year (pay.fn_encashed_days): days = the balance, at most what is left of the year's
+    -- maximum after earlier encashments; below the Min Limit after that, nothing.
+    SELECT x.employee_id, x.employee_name, x.available_days, x.already_encashed_days,
+           CAST(CASE WHEN x.days <= 0 THEN 0
+                     WHEN @amount_per_leave IS NULL AND x.salary IS NULL THEN 0
+                     WHEN @min IS NOT NULL AND x.days < @min THEN 0
+                     ELSE x.days END AS DECIMAL(6,2)) AS encashable_days,
+           CASE WHEN x.balance > 0 AND @max IS NOT NULL AND x.balance > @max - x.already_encashed_days THEN N'max'
+                WHEN x.balance > 0 AND @min IS NOT NULL AND x.days < @min THEN N'min' END AS capped_by,
+           CAST(ROUND(CASE WHEN x.days <= 0 OR (@min IS NOT NULL AND x.days < @min) THEN 0 ELSE x.days END
+                      * ISNULL(@amount_per_leave, ISNULL(x.salary, 0) / 30.0), 2) AS DECIMAL(18,2)) AS amount
     FROM (
-        SELECT b.employee_id, NULLIF(CONCAT_WS(N' ', e.first_name, e.last_name), N'') AS employee_name, b.salary,
+        SELECT b.employee_id, NULLIF(CONCAT_WS(N' ', e.first_name, e.last_name), N'') AS employee_name, b.salary, b.balance,
                CAST(CASE WHEN b.balance < 0 THEN 0 ELSE b.balance END AS DECIMAL(6,2)) AS available_days,
-               CAST(CASE WHEN b.balance <= 0 THEN 0
-                         WHEN @amount_per_leave IS NULL AND b.salary IS NULL THEN 0
-                         WHEN @min IS NOT NULL AND b.balance < @min THEN 0
-                         WHEN @max IS NOT NULL AND b.balance > @max THEN @max
-                         ELSE b.balance END AS DECIMAL(6,2)) AS encashable_days,
-               CASE WHEN b.balance > 0 AND @min IS NOT NULL AND b.balance < @min THEN N'min'
-                    WHEN @max IS NOT NULL AND b.balance > @max THEN N'max' END AS capped_by
+               a.already AS already_encashed_days,
+               CASE WHEN b.balance <= 0 THEN 0
+                    WHEN @max IS NOT NULL AND b.balance > @max - a.already
+                         THEN CASE WHEN @max - a.already > 0 THEN @max - a.already ELSE 0 END
+                    ELSE b.balance END AS days
         FROM #b b
         JOIN [hr].[employee] e ON e.id = b.employee_id
+        CROSS APPLY (SELECT [pay].[fn_encashed_days](b.employee_id, @leave_type_id, @fiscal_year, @id) AS already) a
     ) x
     ORDER BY x.employee_name;
 END

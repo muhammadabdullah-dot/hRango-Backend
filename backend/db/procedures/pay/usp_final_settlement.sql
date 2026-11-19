@@ -32,7 +32,11 @@ BEGIN
       AND (@branch_id IS NULL OR e.branch_id = @branch_id)
       AND (@department_id IS NULL OR e.department_id = @department_id)
       AND (@location_id IS NULL OR e.location_id = @location_id)
-      AND (@employee_status IS NULL OR e.status = @employee_status)
+      -- Active = employed (active, probation, notice); inactive = switched off or left; else one status.
+      AND (@employee_status IS NULL
+           OR (@employee_status = N'active' AND e.status IN (N'active', N'probation', N'notice'))
+           OR (@employee_status = N'inactive' AND e.status IN (N'inactive', N'left'))
+           OR (@employee_status NOT IN (N'active', N'inactive') AND e.status = @employee_status))
       AND (@pattern IS NULL OR CONCAT(e.first_name, N' ', e.last_name) LIKE @pattern OR e.code LIKE @pattern)
     OPTION (RECOMPILE);
 
@@ -89,7 +93,9 @@ GO
 
 -- Inputs for working out a settlement: the month of the last working day up to that day, every pay item,
 -- every unpaid loan installment, and the encashable leave balance. The month's salary is left out when the
--- person already has a payslip in a monthly run of that month. Result sets as usp_payroll_run_inputs.
+-- person already has a payslip in a monthly run of that month; when that run is closed (paid), the salary it
+-- paid is passed on (salary_paid) so the settlement recovers the days paid after the last working date.
+-- Result sets as usp_payroll_run_inputs.
 CREATE OR ALTER PROCEDURE [pay].[usp_final_settlement_inputs]
     @company_id      BIGINT,
     @actor_user_id   BIGINT,
@@ -118,12 +124,23 @@ BEGIN
     DECLARE @has_month_slip BIT = CASE WHEN EXISTS (
         SELECT 1 FROM [pay].[payslip] p JOIN [pay].[payroll] pr ON pr.id = p.payroll_id AND pr.kind = N'monthly'
         WHERE p.employee_id = @employee_id AND p.payslip_month = @month) THEN 1 ELSE 0 END;
+    -- Salary a closed monthly run already paid for the month: the engine takes back what it paid for the days after
+    -- the last working date (Salary Recovery). A run not closed yet is left to work the month out itself.
+    DECLARE @salary_paid DECIMAL(18,2) = (
+        SELECT SUM(ln.amount) FROM [pay].[payslip] p
+        JOIN [pay].[payroll] pr ON pr.id = p.payroll_id AND pr.kind = N'monthly' AND pr.status = N'closed'
+        JOIN [pay].[payslip_line] ln ON ln.payslip_id = p.id
+        JOIN [pay].[pay_item] pi ON pi.id = ln.pay_item_id AND pi.system_code = N'salary'
+        WHERE p.employee_id = @employee_id AND p.payslip_month = @month);
 
     CREATE TABLE #emp (employee_id BIGINT PRIMARY KEY, period_start DATE, period_end DATE, month_start DATE, month_end DATE,
-                       payslip_id BIGINT NULL, include_salary BIT, loans_all BIT, encash_balance BIT, skip_reason NVARCHAR(400) NULL);
+                       payslip_id BIGINT NULL, include_salary BIT, loans_all BIT, encash_balance BIT, skip_reason NVARCHAR(400) NULL,
+                       salary_paid DECIMAL(18,2) NULL);
     CREATE TABLE #items (pay_item_id BIGINT PRIMARY KEY, is_taxable BIT, calculate_only BIT);
-    INSERT #emp (employee_id, period_start, period_end, month_start, month_end, payslip_id, include_salary, loans_all, encash_balance)
-    VALUES (@employee_id, @month, @lwd, @month, EOMONTH(@month), @payslip_id, CASE WHEN @has_month_slip = 1 THEN 0 ELSE 1 END, 1, 1);
+    INSERT #emp (employee_id, period_start, period_end, month_start, month_end, payslip_id, include_salary, loans_all, encash_balance,
+                 salary_paid)
+    VALUES (@employee_id, @month, @lwd, @month, EOMONTH(@month), @payslip_id, CASE WHEN @has_month_slip = 1 THEN 0 ELSE 1 END, 1, 1,
+            CASE WHEN @has_month_slip = 1 THEN @salary_paid END);
     INSERT #items SELECT id, is_taxable, 0 FROM [pay].[pay_item] WHERE company_id = @company_id AND is_display_only = 0;
 
     SELECT CAST(NULL AS BIGINT) AS id, CAST(NULL AS NVARCHAR(30)) AS code, N'Final settlement' AS name, N'final_settlement' AS kind,
@@ -189,10 +206,13 @@ BEGIN
         FROM [pay].[payslip] p CROSS JOIN @j j WHERE p.id = @payslip_id;
 
         DELETE [pay].[payslip_line] WHERE payslip_id = @payslip_id;
-        INSERT [pay].[payslip_line] (payslip_id, pay_item_id, amount, employer_contribution, is_taxable, is_manually_updated, created_by)
-        SELECT @payslip_id, x.pay_item_id, x.amount, x.employer_contribution, ISNULL(x.is_taxable, 0), ISNULL(x.is_manual, 0), @actor_user_id
+        INSERT [pay].[payslip_line] (payslip_id, pay_item_id, amount, employer_contribution, is_taxable, is_manually_updated, label,
+                                     is_one_off, created_by)
+        SELECT @payslip_id, x.pay_item_id, x.amount, x.employer_contribution, ISNULL(x.is_taxable, 0), ISNULL(x.is_manual, 0),
+               x.label, ISNULL(x.is_one_off, 0), @actor_user_id
         FROM @j j CROSS APPLY OPENJSON(j.lines) WITH (pay_item_id BIGINT '$.payItemId', amount DECIMAL(18,2) '$.amount',
-             employer_contribution DECIMAL(18,2) '$.employerContribution', is_taxable BIT '$.isTaxable', is_manual BIT '$.isManual') x;
+             employer_contribution DECIMAL(18,2) '$.employerContribution', is_taxable BIT '$.isTaxable', is_manual BIT '$.isManual',
+             label NVARCHAR(100) '$.label', is_one_off BIT '$.isOneOff') x;
 
         DELETE [pay].[employee_account_entry] WHERE payslip_id = @payslip_id AND pay_rule_id IS NOT NULL;
         INSERT [pay].[employee_account_entry] (employee_id, account_type_id, entry_month, credit, debit, is_processed, payslip_id,
@@ -267,8 +287,10 @@ BEGIN
         IF EXISTS (SELECT 1 FROM [pay].[payslip_line] ln JOIN [pay].[pay_item] pi ON pi.id = ln.pay_item_id
                    WHERE ln.payslip_id = @payslip_id AND ln.amount > 0)
         BEGIN
+            DECLARE @paid TABLE (id BIGINT PRIMARY KEY);
             UPDATE i SET status = N'paid', paid_amount = i.amount, paid_at = @now, payslip_id = @payslip_id,
                    updated_at = @now, updated_by = @actor_user_id
+            OUTPUT inserted.id INTO @paid
             FROM [loan].[loan_installment] i
             JOIN [loan].[loan] l ON l.id = i.loan_id AND l.status = N'active' AND l.employee_id = @employee_id
             JOIN [loan].[loan_type] lt ON lt.id = l.loan_type_id
@@ -276,6 +298,11 @@ BEGIN
               AND EXISTS (SELECT 1 FROM [pay].[payslip_line] ln JOIN [pay].[pay_item] pi ON pi.id = ln.pay_item_id
                           WHERE ln.payslip_id = @payslip_id AND ln.amount > 0
                             AND (ln.pay_item_id = lt.deduction_pay_item_id OR (lt.deduction_pay_item_id IS NULL AND pi.system_code = N'loan_deduction')));
+            IF EXISTS (SELECT 1 FROM @paid)
+            BEGIN
+                DECLARE @paid_ids NVARCHAR(MAX) = (SELECT CONCAT(N'[', STRING_AGG(CONVERT(NVARCHAR(MAX), id), N','), N']') FROM @paid);
+                EXEC [pay].[usp_voucher_advance_recovered] @actor_user_id = @actor_user_id, @paid = @paid_ids;
+            END
             UPDATE l SET status = N'settled', settled_at = @now, updated_at = @now, updated_by = @actor_user_id
             FROM [loan].[loan] l
             WHERE l.employee_id = @employee_id AND l.status = N'active'
@@ -287,17 +314,19 @@ BEGIN
         IF EXISTS (SELECT 1 FROM [pay].[payslip_line] ln JOIN [pay].[pay_item] pi ON pi.id = ln.pay_item_id
                    WHERE ln.payslip_id = @payslip_id AND pi.system_code = N'leave_encashment' AND ln.amount > 0)
         BEGIN
+            -- (The year's Max Limit less what was already encashed that year, as usp_calc_inputs worked it out.)
             INSERT [lv].[leave_ledger] (employee_id, leave_type_id, fiscal_year, entry_date, days, reason, remarks, created_by)
-            SELECT @employee_id, lt.id, b.fiscal_year, @lwd,
-                   -CASE WHEN lt.encashment_max IS NOT NULL AND b.balance > lt.encashment_max THEN lt.encashment_max ELSE b.balance END,
-                   N'encashed', N'Final settlement', @actor_user_id
+            SELECT @employee_id, lt.id, b.fiscal_year, @lwd, -c.days, N'encashed', N'Final settlement', @actor_user_id
             FROM [lv].[leave_type] lt
             CROSS APPLY (SELECT MAX(l.fiscal_year) AS fiscal_year FROM [lv].[leave_ledger] l
                          WHERE l.employee_id = @employee_id AND l.leave_type_id = lt.id) fy
             CROSS APPLY (SELECT fy.fiscal_year, SUM(l.days) AS balance FROM [lv].[leave_ledger] l
                          WHERE l.employee_id = @employee_id AND l.leave_type_id = lt.id AND l.fiscal_year = fy.fiscal_year) b
-            WHERE lt.company_id = @company_id AND lt.allow_encashment = 1 AND b.balance > 0
-              AND (lt.encashment_min IS NULL OR b.balance >= lt.encashment_min);
+            CROSS APPLY (SELECT [pay].[fn_encashed_days](@employee_id, lt.id, fy.fiscal_year, NULL) AS already) a
+            CROSS APPLY (SELECT CASE WHEN lt.encashment_max IS NOT NULL AND b.balance > lt.encashment_max - a.already
+                                     THEN lt.encashment_max - a.already ELSE b.balance END AS days) c
+            WHERE lt.company_id = @company_id AND lt.allow_encashment = 1 AND b.balance > 0 AND c.days > 0
+              AND (lt.encashment_min IS NULL OR c.days >= lt.encashment_min);
 
             UPDATE r SET payslip_id = @payslip_id
             FROM [lv].[leave_encashment_employee] r

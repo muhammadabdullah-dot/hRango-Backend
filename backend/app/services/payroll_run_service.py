@@ -1,6 +1,7 @@
 """Payroll runs: creating them, choosing people, running (inputs -> engine -> save), closing, daily wages,
 the salary sheet and payslips."""
 import json
+import logging
 from datetime import datetime, timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any
@@ -14,6 +15,7 @@ from app.schemas.payroll_runs import DailyWageEditIn, DailyWageIn, EmployeeFilte
 from app.services import payroll_engine, payroll_mail_service, payroll_settings_service
 
 Row = dict[str, Any]
+log = logging.getLogger("hrango")
 CODES = {
     "monthly": {"edit": "payroll.payrolls.edit", "process": "payroll.payrolls.process"},
     "daily_wage": {"create": "payroll.daily_wages.create", "edit": "payroll.daily_wages.edit"},
@@ -102,14 +104,19 @@ def run(db: Db, ctx: RequestContext, id: int, employee_ids: list[int] | None = N
 
 
 def close(db: Db, ctx: RequestContext, id: int, kind: str, row_version: bytes) -> tuple[Row, list[Row], Row | None]:
-    """Closes the run. A monthly run also records its close e-mail ('disabled' while mail is not set up) and
-    returns {status, sent_count, failed_count} as the third value (None for daily wages)."""
+    """Closes the run. A monthly run also records its close e-mail ('disabled' while mail is off) and, with mail
+    on, queues each person's own message with the mail sender (the worker sends them); returns
+    {status, sent_count, failed_count} as the third value (None for daily wages)."""
     if kind != "monthly":
         head, items = repo.close_payroll(db, ctx.company_id, ctx.user_id, id, kind, row_version)
         return head, items, None
     subject = payroll_mail_service.close_email_subject(db, ctx, id)
     head, items = repo.close_payroll(db, ctx.company_id, ctx.user_id, id, kind, row_version, mail.enabled(), subject)
-    # TODO(payroll): when mail is enabled, wake the mail sender for the queued rows (see payroll_mail_service).
+    if mail.enabled():
+        try:
+            payroll_mail_service.send_close_email(db, ctx, id)
+        except Exception:  # noqa: BLE001 - the run is closed; its rows stay queued and the state says so
+            log.exception("payroll %s: queuing the close e-mail failed", id)
     email = repo.close_email_get(db, ctx.company_id, id)[0]
     return head, items, {k: email[k] for k in ("status", "sent_count", "failed_count")}
 
@@ -216,8 +223,12 @@ def edit_payslip(db: Db, ctx: RequestContext, id: int, body: PayslipEditIn, row_
     ids = [l.pay_item_id for l in body.lines]
     if len(ids) != len(set(ids)):
         raise AppError(422, "VALIDATION_FAILED", "A pay item is listed twice.", {"lines": "A pay item is listed twice."})
-    lines_json = json.dumps([{"payItemId": l.pay_item_id, "amount": str(l.amount),
-                              "employerContribution": None if l.employer_contribution is None else str(l.employer_contribution)}
+    if any(l.amount is None and not l.remove for l in body.lines):
+        raise AppError(422, "VALIDATION_FAILED", "Enter an amount for each line.", {"lines": "Enter an amount for each line."})
+    # A pay item not on the slip is added as a one-off line (label optional); remove takes a one-off line off.
+    lines_json = json.dumps([{"payItemId": l.pay_item_id, "amount": None if l.amount is None else str(l.amount),
+                              "employerContribution": None if l.employer_contribution is None else str(l.employer_contribution),
+                              "label": (l.label or "").strip() or None, "remove": l.remove}
                              for l in body.lines])
     head, lines = repo.save_payslip_lines(db, ctx.company_id, ctx.user_id, CODES["payslip_edit"], id, lines_json, row_version)
     return head, lines, display(payroll_settings_service.load(db, ctx.company_id))

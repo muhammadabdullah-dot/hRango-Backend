@@ -43,7 +43,7 @@ def test_system_pay_items_and_formulas(client, ctx):
     items = client.get("/api/payroll/pay-items", params={"pageSize": 100}, headers=h).json()["data"]
     codes = {i["systemCode"] for i in items if i["systemCode"]}
     assert codes == {"salary", "overtime", "absent_deduction", "leave_deduction", "short_deduction", "penalty_deduction",
-                     "loan_deduction", "leave_encashment", "tax"}
+                     "loan_deduction", "leave_encashment", "tax", "salary_recovery"}
     salary = next(i for i in items if i["systemCode"] == "salary")
     assert salary["expression"] == "{gross_salary} * {employed_days} / {month_days}" and salary["reference"] == "{salary}"
 

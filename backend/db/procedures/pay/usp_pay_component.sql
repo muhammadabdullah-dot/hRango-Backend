@@ -2,15 +2,16 @@
 -- service (app/services/payroll_expression.py) before these procedures are called.
 
 -- Adds the pay items the run works out itself (salary, overtime, absent / leave / short / penalty
--- deductions, loan installments, leave encashment, tax) and their formulas, when a company does not
--- have them yet. Never changes items that exist: the company may edit their formulas and labels.
+-- deductions, loan installments, leave encashment, tax, and the final settlement's salary recovery) and their
+-- formulas, when a company does not have them yet. Never changes items that exist: the company may edit their
+-- formulas and labels.
 CREATE OR ALTER PROCEDURE [pay].[usp_pay_item_system_ensure]
     @company_id BIGINT
 AS
 BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
-    IF (SELECT COUNT(*) FROM [pay].[pay_item] WHERE company_id = @company_id AND system_code IS NOT NULL) >= 9
+    IF (SELECT COUNT(*) FROM [pay].[pay_item] WHERE company_id = @company_id AND system_code IS NOT NULL) >= 10
         RETURN;
 
     DECLARE @sys TABLE (system_code NVARCHAR(30), name NVARCHAR(200), label NVARCHAR(200), item_type NVARCHAR(30),
@@ -30,7 +31,9 @@ BEGIN
          N'{gross_salary} / {applicable_days} * {penalty_days}', 6),
         (N'loan_deduction', N'Loan Deduction', N'Loan / Advance Deduction', N'deduction', N'fixed', 0, NULL, NULL, 7),
         (N'leave_encashment', N'Leave Encashment', N'Leave Encashment', N'earning', N'fixed', 1, NULL, NULL, 8),
-        (N'tax', N'Tax', N'Income Tax', N'deduction', N'fixed', 0, NULL, NULL, 9);
+        (N'tax', N'Tax', N'Income Tax', N'deduction', N'fixed', 0, NULL, NULL, 9),
+        -- Final settlement only: salary a closed monthly payroll paid for the days after the last working date.
+        (N'salary_recovery', N'Salary Recovery', N'Salary paid after last working day', N'deduction', N'fixed', 1, NULL, NULL, 10);
 
     BEGIN TRAN;
         INSERT [pay].[formula] (company_id, name, expression, is_custom, description)
@@ -51,6 +54,7 @@ BEGIN
                CASE s.system_code WHEN N'tax' THEN N'Worked out by the run from the payroll''s tax structure.'
                                   WHEN N'loan_deduction' THEN N'Loan installments due in the month.'
                                   WHEN N'leave_encashment' THEN N'Leave encashments paid through payroll.'
+                                  WHEN N'salary_recovery' THEN N'Final settlement: salary a closed payroll paid for the days after the last working date, taken back.'
                                   ELSE NULL END
         FROM @sys s
         WHERE NOT EXISTS (SELECT 1 FROM [pay].[pay_item] p WHERE p.company_id = @company_id AND p.system_code = s.system_code)

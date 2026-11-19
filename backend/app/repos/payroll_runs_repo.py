@@ -95,6 +95,19 @@ def close_email_get(db: Db, company_id: int, id: int) -> tuple[Row, list[Row]]:
     return head[0], failures
 
 
+def close_email_refresh(db: Db, payroll_id: int) -> None:
+    db.call("pay.usp_payroll_close_email_refresh", payroll_id=payroll_id)
+
+
+def mail_outbox_pending(db: Db, company_id: int, entity_type: str, entity_id: int) -> list[Row]:
+    """Payroll e-mail rows (close e-mail or revision letter) still to hand to the mail sender."""
+    return db.call("pay.usp_mail_outbox_pending", company_id=company_id, entity_type=entity_type, entity_id=entity_id)
+
+
+def mail_outbox_hand_off(db: Db, id: int, mail_message_id: int | None, status: str, error: str | None) -> None:
+    db.call("pay.usp_mail_outbox_hand_off", id=id, mail_message_id=mail_message_id, status=status, error=error)
+
+
 def bank_file(db: Db, company_id: int, actor_user_id: int, permission_code: str, id: int, kind: str,
               disbursement_bank_id: int | None) -> tuple[Row, list[Row]]:
     head, rows = db.call_sets("pay.usp_payroll_bank_file", company_id=company_id, actor_user_id=actor_user_id,
