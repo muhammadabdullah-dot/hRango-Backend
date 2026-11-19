@@ -142,7 +142,8 @@ BEGIN
     SELECT h.employee_id, h.holiday_date, h.holiday_id, h.holiday_name, h.holiday_type, h.attendance_exempt
     FROM [sch].[fn_employee_holidays](@company_id, @from_date, @to_date) h
     JOIN #page p ON p.employee_id = h.employee_id
-    ORDER BY p.sort_no, h.holiday_date, h.holiday_id;
+    ORDER BY p.sort_no, h.holiday_date, h.holiday_id
+    OPTION (RECOMPILE, MAX_GRANT_PERCENT = 1);   -- planned for the page, not the company (see pm.usp_task_list)
 
     SELECT s.work_date, SUM(s.planned_minutes) AS planned_minutes, COUNT(*) AS shift_count
     FROM #emp p

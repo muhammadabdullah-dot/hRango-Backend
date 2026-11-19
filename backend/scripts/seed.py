@@ -102,6 +102,31 @@ def ensure_database(name: str, reset: bool) -> None:
     if not exists:
         cur.execute(f"CREATE DATABASE [{name}]")
         print(f"created {name}")
+        # A new database has no users yet, so row versioning can be switched on without disturbing anyone.
+        set_row_versioning(cur, name)
+    conn.close()
+
+
+def set_row_versioning(cur: pyodbc.Cursor, name: str) -> None:
+    """READ_COMMITTED_SNAPSHOT: readers see the last committed row instead of waiting for a writer. Without it a
+    payroll run or an attendance process holds up ordinary pages for minutes (the Test Run of 18 Nov 2026 saw
+    80-second page loads and deadlocks). Switching it on needs a moment with no other connections to the database
+    (WITH ROLLBACK IMMEDIATE ends them), so on an existing database it is only done with --enable-row-versioning."""
+    cur.execute(f"ALTER DATABASE [{name}] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE")
+    print(f"row versioning (READ_COMMITTED_SNAPSHOT) on for {name}")
+
+
+def check_row_versioning(enable: bool) -> None:
+    name = db_name(settings.db_url)
+    master = re.sub(r"((?:Database|Initial Catalog)=)[^;]+", r"\1master", settings.db_url, flags=re.I)
+    conn = pyodbc.connect(master, autocommit=True)
+    cur = conn.cursor()
+    on = cur.execute("SELECT is_read_committed_snapshot_on FROM sys.databases WHERE name = ?", name).fetchval()
+    if not on and enable:
+        set_row_versioning(cur, name)
+    elif not on:
+        print(f"WARNING: row versioning is off for {name}: pages wait behind long writes. In a quiet moment run "
+              "`python -m scripts.seed --enable-row-versioning` (it briefly ends every connection to the database).")
     conn.close()
 
 
@@ -244,6 +269,8 @@ def main() -> None:
                    "(password from HRANGO_PLATFORM_PASSWORD or asked)")
     p.add_argument("--migrations-dir", help="read migrations from this folder (parallel development)")
     p.add_argument("--keep-going", action="store_true", help="report failing procedure/seed files and continue")
+    p.add_argument("--enable-row-versioning", action="store_true",
+                   help="switch READ_COMMITTED_SNAPSHOT on for an existing database (ends open connections for a moment)")
     a = p.parse_args()
     global MIGRATIONS_DIR, KEEP_GOING
     if a.migrations_dir:
@@ -255,6 +282,7 @@ def main() -> None:
         export(Path(a.export))
     else:
         install(a.create, a.reset, (a.company, a.admin_email) if a.bootstrap else None, a.platform_admin)
+        check_row_versioning(a.enable_row_versioning)
 
 
 if __name__ == "__main__":

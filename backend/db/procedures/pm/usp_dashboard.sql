@@ -41,7 +41,8 @@ BEGIN
     SELECT TOP 50 r.*
     FROM #mine m JOIN [pm].[fn_task_rows](@company_id) r ON r.id = m.task_id
     WHERE m.is_open = 1
-    ORDER BY CASE WHEN m.due_date IS NULL THEN 1 ELSE 0 END, m.due_date, m.task_id;
+    ORDER BY CASE WHEN m.due_date IS NULL THEN 1 ELSE 0 END, m.due_date, m.task_id
+    OPTION (RECOMPILE, MAX_GRANT_PERCENT = 1);   -- wide rows: see the page query in pm.usp_task_list
 
     SELECT w.workspace_id, l.column_key, l.permission_level
     FROM (SELECT DISTINCT workspace_id FROM #mine WHERE is_open = 1) w

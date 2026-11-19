@@ -215,11 +215,15 @@ BEGIN
 
     SELECT COUNT(*) AS total FROM #f;
 
+    -- MAX_GRANT_PERCENT: fn_task_rows' rows are wide (description, JSON), so the plan asks for about 250 MB of
+    -- sort and hash memory for one page. When the server is short of memory a query waits for its grant until it
+    -- times out (Test Run: 222 s for 41 rows, 0.2 s of it work); capped, it takes what it needs (a few MB).
     SELECT f.group_key, f.group_name, f.depth, f.root_id, r.*
     FROM #f f
     JOIN [pm].[fn_task_rows](@company_id) r ON r.id = f.task_id
     WHERE f.rn > (@page - 1) * @page_size AND f.rn <= @page * @page_size
-    ORDER BY f.rn;
+    ORDER BY f.rn
+    OPTION (RECOMPILE, MAX_GRANT_PERCENT = 1);
 
     SELECT group_key, group_name, COUNT(*) AS task_count
     FROM #f GROUP BY group_key, group_name, sort_num, sort_text

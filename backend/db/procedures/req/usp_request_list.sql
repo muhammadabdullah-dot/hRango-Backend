@@ -71,7 +71,7 @@ BEGIN
     WHERE r.id IN (SELECT id FROM @rows x WHERE @status IS NULL OR x.status = @status)
     ORDER BY r.submitted_at DESC, r.id DESC
     OFFSET (@page - 1) * @page_size ROWS FETCH NEXT @page_size ROWS ONLY
-    OPTION (RECOMPILE);
+    OPTION (RECOMPILE, MAX_GRANT_PERCENT = 1);   -- wide rows (details_json): see the page query in pm.usp_task_list
 
     SELECT s.status, COUNT(x.id) AS total
     FROM (VALUES (N'pending'), (N'approved'), (N'rejected'), (N'cancelling'), (N'cancelled')) s (status)
