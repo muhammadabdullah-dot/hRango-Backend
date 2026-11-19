@@ -28,15 +28,6 @@ class PublicTaskRowOut(ApiModel):
     tags: list[PublicTagOut] | None = None
 
 
-class PublicShareOut(ApiModel):
-    # list (a list's tasks), view (a workspace's tasks), task (a task and its subtasks).
-    entity_type: str
-    title: str
-    allow_open_tasks: bool
-    properties: list[str]
-    tasks: list[PublicTaskRowOut]
-
-
 class PublicSubtaskOut(ApiModel):
     id: str
     code: str | None
@@ -83,6 +74,21 @@ class PublicTaskOut(PublicTaskRowOut):
     comments: list[PublicCommentOut] | None = None
     attachments: list[PublicAttachmentOut] | None = None
     custom_fields: list[PublicFieldOut] | None = None
+
+
+class PublicShareOut(ApiModel):
+    # list (a list's tasks), view (a workspace's tasks), task (a task and its subtasks).
+    entity_type: str
+    title: str
+    # Whether a visitor may open the tasks on the page (GET .../tasks/{taskId}); a shared task's own details
+    # come in `task` either way.
+    allow_open_tasks: bool
+    # What the link shows (Share Tasks Properties); a property left out is null on every task.
+    properties: list[str]
+    # The page's tasks; subtasks (parentTaskId set) only when "subtasks" is shown.
+    tasks: list[PublicTaskRowOut]
+    # entityType task: the shared task itself with its details (counted in the same access); null otherwise.
+    task: PublicTaskOut | None = None
 
 
 # ---------------------------------------------------------------- self-service sign-up (roadmap 1.1)

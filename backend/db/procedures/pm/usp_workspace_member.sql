@@ -3,11 +3,16 @@
 -- workspace_admin role. The owner stays a workspace admin.
 
 -- Adds members (or changes the role of ones already there). @members: [{"employee_id", "member_role"}]
+-- @existing_only = 1 (PATCH .../members/{employeeId}, "change role"): only changes roles; someone who is not
+-- a member is "Member not found" instead of being added.
+-- Who may set which role: workspace admins and HR (rank 4+); only a workspace admin grants the workspace_admin
+-- role or changes a workspace admin's role; the owner stays a workspace admin.
 CREATE OR ALTER PROCEDURE [pm].[usp_workspace_member_save]
     @company_id    BIGINT,
     @actor_user_id BIGINT,
     @workspace_id  BIGINT,
-    @members       NVARCHAR(MAX)
+    @members       NVARCHAR(MAX),
+    @existing_only BIT = 0
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -28,6 +33,9 @@ BEGIN
 
     IF NOT EXISTS (SELECT 1 FROM @mb)
         THROW 50400, N'members|Pick at least one employee.', 1;
+    IF @existing_only = 1 AND EXISTS (SELECT 1 FROM @mb s WHERE NOT EXISTS (
+            SELECT 1 FROM [pm].[workspace_member] m WHERE m.workspace_id = @workspace_id AND m.employee_id = s.employee_id))
+        THROW 50404, N'Member not found', 1;
     IF EXISTS (SELECT 1 FROM @mb m WHERE NOT EXISTS (SELECT 1 FROM [hr].[employee] e WHERE e.id = m.employee_id AND e.company_id = @company_id))
         THROW 50400, N'members|An employee was not found.', 1;
     IF EXISTS (SELECT 1 FROM @mb WHERE member_role NOT IN (N'workspace_admin', N'hr', N'manager', N'team_leader', N'contributor'))

@@ -143,6 +143,60 @@ def test_comment_and_reply_notifications(db, client, company, team):
     assert told(contributor, top) == ["projects.comment"]
 
 
+def test_mentions_only_people_who_see_the_task(db, client, company, team):
+    """Test Run row 14.38: in a private workspace a contributor sees only the tasks they created or are assigned,
+    so mentioning another contributor told them about a task that did not open. The picker (GET /people?taskId=)
+    offers only the people who can see it, and the API refuses a mention of anyone else."""
+    dept = team["dept"]
+    owner, seer, blind, outsider = (pm.person(db, client, company, dept, first_name=n)
+                                    for n in ("Ownerm", "Seer", "Blind", "Outsiderm"))
+    ws = pm.workspace(client, owner["headers"], dept, owner["employee_id"], privacy="private",
+                      members=[(seer["employee_id"], "contributor"), (blind["employee_id"], "contributor")])
+    task = pm.task(client, owner["headers"], ws["id"], name="Login screen", assigneeIds=[str(seer["employee_id"])])
+    sub = pm.task(client, owner["headers"], ws["id"], name="Login API", parentTaskId=task["id"])
+
+    def viewers(task_id, headers=owner["headers"]):
+        r = client.get(f"{API}/people", params={"taskId": task_id, "pageSize": 100}, headers=headers)
+        assert r.status_code == 200, r.text
+        return {p["id"] for p in r.json()["data"]}
+
+    ids = {k: str(p["employee_id"]) for k, p in (("owner", owner), ("seer", seer), ("blind", blind),
+                                                 ("outsider", outsider))}
+    assert viewers(task["id"]) == {ids["owner"], ids["seer"]}
+    assert viewers(sub["id"]) == {ids["owner"], ids["seer"]}  # the subtask of a task assigned to them
+    assert client.get(f"{API}/people", params={"taskId": task["id"]}, headers=blind["headers"]).status_code == 404
+    # As the task opens: the blind contributor and the outsider cannot open it.
+    assert client.get(f"{API}/tasks/{task['id']}", headers=blind["headers"]).status_code == 404
+    assert client.get(f"{API}/tasks/{task['id']}", headers=seer["headers"]).status_code == 200
+
+    url = f"{API}/tasks/{task['id']}/comments"
+    for who in ("blind", "outsider"):
+        r = client.post(url, json={"body": "please review", "mentions": [{"employeeId": int(ids[who])}]},
+                        headers=owner["headers"])
+        assert r.status_code == 422 and r.json()["code"] == "MENTION_NOT_ALLOWED", r.text
+        assert "cannot see this task" in r.json()["fieldErrors"]["mentions"]
+    ok = client.post(url, json={"body": "@Seer please review", "mentions": [{"employeeId": int(ids["seer"])}]},
+                     headers=owner["headers"])
+    assert ok.status_code == 201, ok.text
+    told = fe.notifications(db, company, seer["employee_id"], "pm.task_comment", int(ok.json()["data"]["id"]))
+    assert [n["notification_type"] for n in told] == ["mention"]
+    assert told[0]["link"] == f"/project-management/workspaces/{ws['id']}?task={task['id']}"
+    # An edit cannot add one either.
+    edit = client.put(f"{API}/comments/{ok.json()['data']['id']}",
+                      json={"body": "@Seer @Blind please review", "rowVersion": ok.json()["data"]["rowVersion"],
+                            "mentions": [{"employeeId": int(ids["seer"])}, {"employeeId": int(ids["blind"])}]},
+                      headers=owner["headers"])
+    assert edit.status_code == 422 and edit.json()["code"] == "MENTION_NOT_ALLOWED"
+    # Once assigned, they can see the task and be mentioned.
+    r = client.put(f"{API}/tasks/{task['id']}/assignees",
+                   json={"assignees": [{"employeeId": int(ids["seer"])}, {"employeeId": int(ids["blind"])}]},
+                   headers=owner["headers"])
+    assert r.status_code == 200, r.text
+    assert viewers(task["id"]) == {ids["owner"], ids["seer"], ids["blind"]}
+    assert client.post(url, json={"body": "@Blind now you", "mentions": [{"employeeId": int(ids["blind"])}]},
+                       headers=owner["headers"]).status_code == 201
+
+
 def test_attachments(client, db, company, team):
     contributor, other = team["contributor"], team["other"]
     tid = team["task"]["id"]

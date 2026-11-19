@@ -16,7 +16,7 @@ from app.schemas.common import paginated
 from app.schemas.files import FileRef
 from app.schemas.projects import (ActivityOut, ColumnPermissionIn, ColumnPermissionOut, ColumnPermissionsOut, CoverIn,
                                   CustomFieldIn, CustomFieldOut, FavoriteIn, FavoriteOut, FeaturesIn, FolderIn,
-                                  FolderOut, ListIn, ListOut, ListPatchIn, MemberIn, MemberOut, MembersIn, PersonOut,
+                                  FolderOut, ListIn, ListOut, ListPatchIn, MemberOut, MembersIn, PersonOut,
                                   StatusesIn, TagIn, TagOut, TemplateOut, ViewIn, ViewOut, ViewPatchIn, WorkspaceCreateIn,
                                   WorkspaceIn, WorkspaceOut, WorkspaceSummaryOut)
 from app.services import projects_service
@@ -64,8 +64,9 @@ def list_templates(db: Db, kind: str) -> dict:
     return {"data": out}
 
 
-def list_people(db: Db, ctx: RequestContext, q: str | None, workspace_id: int | None, paging: PageParams) -> dict:
-    total, rows = projects_service.list_people(db, ctx, q, workspace_id, paging.page, paging.page_size)
+def list_people(db: Db, ctx: RequestContext, q: str | None, workspace_id: int | None, paging: PageParams,
+                task_id: int | None = None) -> dict:
+    total, rows = projects_service.list_people(db, ctx, q, workspace_id, paging.page, paging.page_size, task_id)
     return paginated(rows, total, paging.page, paging.page_size, lambda r: to_model(PersonOut, r, ctx.company_id))
 
 
@@ -139,7 +140,7 @@ def add_members(db: Db, ctx: RequestContext, workspace_id: int, body: MembersIn)
 
 
 def change_member_role(db: Db, ctx: RequestContext, workspace_id: int, employee_id: int, role: str) -> dict:
-    rows = projects_service.save_members(db, ctx, workspace_id, [MemberIn(employee_id=employee_id, member_role=role)])
+    rows = projects_service.change_member_role(db, ctx, workspace_id, employee_id, role)
     return {"data": [MemberOut(**r) for r in rows]}
 
 

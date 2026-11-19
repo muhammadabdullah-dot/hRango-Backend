@@ -42,6 +42,33 @@ WHERE t.company_id = @company_id
        OR EXISTS (SELECT 1 FROM [pm].[task_assignee] x WHERE x.task_id = t.parent_task_id AND x.employee_id = a.employee_id));
 GO
 
+-- The employees who may see one task: pm.fn_task_access's rules, per employee instead of per sign-in
+-- (keep the two in step). A comment mentions only them (Test Run row 14.38: a member mentioned on a task
+-- he could not see got a notification that opened nothing), and the mention picker offers only them.
+-- created_by is a sign-in, so "created it" is any of the employee's sign-ins. role_rank as in
+-- pm.fn_workspace_access (0: reads a public workspace without being a member).
+CREATE OR ALTER FUNCTION [pm].[fn_task_viewers] (@company_id BIGINT, @task_id BIGINT)
+RETURNS TABLE
+AS RETURN
+SELECT e.id AS employee_id, r.member_role, k.role_rank
+FROM [pm].[task] t
+JOIN [pm].[workspace] w ON w.id = t.workspace_id
+LEFT JOIN [pm].[task_list] l ON l.id = t.task_list_id
+JOIN [hr].[employee] e ON e.company_id = @company_id
+LEFT JOIN [pm].[workspace_member] m ON m.workspace_id = w.id AND m.employee_id = e.id
+CROSS APPLY (SELECT ISNULL(m.member_role, CASE WHEN w.privacy = N'workspace' THEN N'contributor' END) AS member_role) r
+CROSS APPLY (SELECT CASE r.member_role WHEN N'workspace_admin' THEN 5 WHEN N'hr' THEN 4 WHEN N'manager' THEN 3
+                                       WHEN N'team_leader' THEN 2 WHEN N'contributor' THEN 1 ELSE 0 END AS role_rank) k
+WHERE t.id = @task_id AND t.company_id = @company_id
+  AND (m.employee_id IS NOT NULL OR w.privacy <> N'private')
+  AND (   l.id IS NULL OR ISNULL(l.privacy, N'workspace') <> N'private' OR k.role_rank >= 4
+       OR EXISTS (SELECT 1 FROM [pm].[task_list_member] lm WHERE lm.task_list_id = l.id AND lm.employee_id = e.id))
+  AND (   k.role_rank <> 1 OR w.privacy <> N'private'
+       OR EXISTS (SELECT 1 FROM [auth].[user_account] u WHERE u.id = t.created_by AND u.employee_id = e.id)
+       OR EXISTS (SELECT 1 FROM [pm].[task_assignee] x WHERE x.task_id = t.id AND x.employee_id = e.id)
+       OR EXISTS (SELECT 1 FROM [pm].[task_assignee] x WHERE x.task_id = t.parent_task_id AND x.employee_id = e.id));
+GO
+
 -- Column permissions in effect for one person in one workspace ("Set Role Permission"): a custom
 -- permission for the person wins over their role's, which wins over the workspace default. Columns
 -- with no row inherit the workspace role rules. Workspace admins can always edit every column.

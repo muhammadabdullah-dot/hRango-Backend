@@ -1,5 +1,6 @@
 """Routes that work without signing in: shared project links (each checks its own token; 404 SHARE_NOT_FOUND,
-410 SHARE_EXPIRED / SHARE_EXHAUSTED), and self-service sign-up with the plans on offer."""
+410 SHARE_EXPIRED / SHARE_NOT_STARTED / SHARE_EXHAUSTED; a task: 404 NOT_FOUND, 403 SHARE_TASKS_CLOSED), and
+self-service sign-up with the plans on offer. The web app's page for a link is /shared/{token}."""
 from fastapi import APIRouter, Depends, Path, Request, status
 
 from app.controllers import public_controller as c
@@ -10,7 +11,8 @@ from app.schemas.public import PublicPlanOut, PublicShareOut, PublicTaskOut, Sig
 from app.services import signup_service
 
 router = APIRouter(prefix="/public", tags=["public"])
-REFUSED = {404: {"description": "SHARE_NOT_FOUND"}, 410: {"description": "SHARE_EXPIRED or SHARE_EXHAUSTED"}}
+REFUSED = {404: {"description": "SHARE_NOT_FOUND"},
+           410: {"description": "SHARE_EXPIRED, SHARE_NOT_STARTED or SHARE_EXHAUSTED"}}
 
 
 @router.get("/shares/{token}", response_model=Item[PublicShareOut], responses=REFUSED)

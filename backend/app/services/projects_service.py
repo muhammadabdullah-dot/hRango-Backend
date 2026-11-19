@@ -39,8 +39,8 @@ def list_templates(db: Db, kind: str) -> tuple[Rows, Rows]:
 
 
 def list_people(db: Db, ctx: RequestContext, search: str | None, workspace_id: int | None, page: int,
-                page_size: int) -> tuple[int, Rows]:
-    return projects_repo.list_people(db, ctx.company_id, ctx.user_id, search, workspace_id, page, page_size)
+                page_size: int, task_id: int | None = None) -> tuple[int, Rows]:
+    return projects_repo.list_people(db, ctx.company_id, ctx.user_id, search, workspace_id, page, page_size, task_id)
 
 
 # --------------------------------------------------------------------------- workspaces
@@ -102,6 +102,13 @@ def list_members(db: Db, ctx: RequestContext, workspace_id: int) -> Rows:
 
 def save_members(db: Db, ctx: RequestContext, workspace_id: int, members: list[MemberIn]) -> Rows:
     return projects_repo.save_members(db, ctx.company_id, ctx.user_id, workspace_id, _members(members))
+
+
+def change_member_role(db: Db, ctx: RequestContext, workspace_id: int, employee_id: int, role: str) -> Rows:
+    """A member's new workspace role. Someone who is not a member is 404, not added (pm.usp_workspace_member_save
+    @existing_only); the procedure enforces who may give which role."""
+    members = _members([MemberIn(employee_id=employee_id, member_role=role)])
+    return projects_repo.save_members(db, ctx.company_id, ctx.user_id, workspace_id, members, existing_only=True)
 
 
 def delete_member(db: Db, ctx: RequestContext, workspace_id: int, employee_id: int) -> None:

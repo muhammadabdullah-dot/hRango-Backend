@@ -10,17 +10,20 @@ from app.core.db import Db
 from app.core.errors import AppError
 from app.core.files import file_url
 from app.repos import public_repo
+from app.schemas.projects_collab import SHARE_PROPERTIES
 
 Rows = list[dict[str, Any]]
 # share_link.entity_type -> what the page shows.
 ENTITY = {"task": "task", "task_list": "list", "workspace": "view"}
-DEFAULT_PROPERTIES = ["task_name_status", "assignee", "priority", "due_date"]
+# A link saved without properties shows everything, as the sharing dialog says (pm.fn_share_tasks agrees).
+DEFAULT_PROPERTIES = list(SHARE_PROPERTIES)
 
 
 def _refuse(state: str) -> AppError:
-    if state in ("expired", "not_started"):
-        message = "This link is not active yet." if state == "not_started" else "This link has expired."
-        return AppError(410, "SHARE_EXPIRED", message)
+    if state == "not_started":
+        return AppError(410, "SHARE_NOT_STARTED", "This link is not active yet.")
+    if state == "expired":
+        return AppError(410, "SHARE_EXPIRED", "This link has expired.")
     if state == "exhausted":
         return AppError(410, "SHARE_EXHAUSTED", "This link has been opened as many times as allowed.")
     if state == "tasks_closed":
@@ -51,17 +54,24 @@ def open_share(db: Db, token: str) -> dict[str, Any]:
     sets = public_repo.open_share(db, token)
     head = _header(sets)
     props = set(head["properties"])
+    # A shared task comes with its own details (sets 3 to 8): they are what the link shares.
+    task = _detail(sets[2:], props, head["company_id"]) if head["entity_type"] == "task" and len(sets) >= 8 else None
     return {"entity_type": ENTITY.get(head["entity_type"], head["entity_type"]), "title": head["title"],
             "allow_open_tasks": bool(head["allow_open_tasks"]), "properties": head["properties"],
-            "tasks": [_row(t, props) for t in sets[1]]}
+            "tasks": [_row(t, props) for t in sets[1]], "task": task}
 
 
 def share_task(db: Db, token: str, task_id: int) -> dict[str, Any]:
     sets = public_repo.share_task(db, token, task_id)
     head = _header(sets)
-    props, company_id = set(head["properties"]), head["company_id"]
-    task = sets[1][0]
-    _, _, subtasks, checklist, comments, attachments, fields = sets
+    return _detail(sets[1:], set(head["properties"]), head["company_id"])
+
+
+def _detail(sets: list[Rows], props: set[str], company_id: int) -> dict[str, Any]:
+    """One task from pm.usp_public_share_task_sets: the task, subtasks, checklist, comments, attachments, fields,
+    each kept only when the link shows it."""
+    task = sets[0][0]
+    subtasks, checklist, comments, attachments, fields = sets[1:6]
     out = _row(task, props)
     out["start_date"] = task["start_date"] if "due_date" in props else None
     out["description"] = task["description"] if "description" in props else None

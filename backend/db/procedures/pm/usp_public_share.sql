@@ -55,8 +55,51 @@ BEGIN
 END
 GO
 
+-- Internal: one shared task's details, as six result sets: the task, its subtasks, checklist, comments,
+-- attachments and custom field values (every property; the service keeps the ones the link shows).
+CREATE OR ALTER PROCEDURE [pm].[usp_public_share_task_sets]
+    @share_id BIGINT,
+    @task_id  BIGINT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT t.id, t.parent_task_id, t.code, t.name, t.description, st.name AS status_name, st.color AS status_color, st.status_group,
+           t.priority, t.start_date, t.due_date, t.cover_file_id,
+           (SELECT NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' ') AS name FROM [pm].[task_assignee] a
+            JOIN [hr].[employee] e ON e.id = a.employee_id WHERE a.task_id = t.id ORDER BY e.first_name FOR JSON PATH) AS assignees_json,
+           (SELECT g.name, g.color FROM [pm].[task_tag] x JOIN [pm].[tag] g ON g.id = x.tag_id WHERE x.task_id = t.id
+            ORDER BY g.name FOR JSON PATH) AS tags_json
+    FROM [pm].[task] t JOIN [pm].[workspace_status] st ON st.id = t.status_id
+    WHERE t.id = @task_id;
+
+    SELECT c.id, c.code, c.name, st.name AS status_name, st.color AS status_color, st.status_group, c.due_date
+    FROM [pm].[task] c JOIN [pm].[workspace_status] st ON st.id = c.status_id
+    WHERE c.parent_task_id = @task_id ORDER BY c.sort_order, c.id;
+
+    SELECT c.item_text, c.is_done FROM [pm].[checklist_item] c WHERE c.task_id = @task_id ORDER BY c.sort_order, c.id;
+
+    SELECT c.id, c.parent_id, NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' ') AS author_name, c.body, c.created_at
+    FROM [pm].[task_comment] c JOIN [hr].[employee] e ON e.id = c.author_id
+    WHERE c.task_id = @task_id ORDER BY c.created_at, c.id;
+
+    SELECT sf.id AS file_id, sf.name, sf.mime_type, sf.size_bytes, CAST(NULL AS NVARCHAR(2000)) AS web_url
+    FROM [core].[attachment] a JOIN [core].[stored_file] sf ON sf.id = a.file_id
+    JOIN [pm].[share_link] s ON s.id = @share_id JOIN [pm].[workspace] w ON w.id = s.workspace_id
+    WHERE a.company_id = w.company_id AND a.entity_type = N'pm.task' AND a.entity_id = @task_id
+    UNION ALL
+    SELECT NULL, xf.name, xf.mime_type, xf.size_bytes, xf.web_url FROM [pm].[task_external_file] xf WHERE xf.task_id = @task_id;
+
+    SELECT f.name, f.field_type, v.field_value
+    FROM [pm].[task_field_value] v JOIN [pm].[custom_field] f ON f.id = v.custom_field_id
+    WHERE v.task_id = @task_id ORDER BY f.sort_order, f.id;
+END
+GO
+
 -- The shared page. Result sets: 1 state and the link (entity, title, allow_open_tasks, properties,
--- company), 2 the tasks (all properties; the service keeps the ones the link shows).
+-- company), 2 the tasks (all properties; the service keeps the ones the link shows), and for a shared task
+-- 3 to 8 that task's details (usp_public_share_task_sets), which the page shows whether or not the link opens
+-- tasks: they are what is shared. One access in all.
 CREATE OR ALTER PROCEDURE [pm].[usp_public_share_open]
     @token NVARCHAR(100),
     @count BIT = 1
@@ -87,6 +130,10 @@ BEGIN
     JOIN [pm].[task] t ON t.id = f.task_id
     JOIN [pm].[workspace_status] st ON st.id = t.status_id
     ORDER BY t.sort_order, t.id;
+
+    DECLARE @shared_task BIGINT = (SELECT entity_id FROM [pm].[share_link] WHERE id = @share_id AND entity_type = N'task');
+    IF @shared_task IS NOT NULL
+        EXEC [pm].[usp_public_share_task_sets] @share_id = @share_id, @task_id = @shared_task;
 END
 GO
 
@@ -118,33 +165,5 @@ BEGIN
     IF @state <> N'ok'
         RETURN;
 
-    SELECT t.id, t.parent_task_id, t.code, t.name, t.description, st.name AS status_name, st.color AS status_color, st.status_group,
-           t.priority, t.start_date, t.due_date, t.cover_file_id,
-           (SELECT NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' ') AS name FROM [pm].[task_assignee] a
-            JOIN [hr].[employee] e ON e.id = a.employee_id WHERE a.task_id = t.id ORDER BY e.first_name FOR JSON PATH) AS assignees_json,
-           (SELECT g.name, g.color FROM [pm].[task_tag] x JOIN [pm].[tag] g ON g.id = x.tag_id WHERE x.task_id = t.id
-            ORDER BY g.name FOR JSON PATH) AS tags_json
-    FROM [pm].[task] t JOIN [pm].[workspace_status] st ON st.id = t.status_id
-    WHERE t.id = @task_id;
-
-    SELECT c.id, c.code, c.name, st.name AS status_name, st.color AS status_color, st.status_group, c.due_date
-    FROM [pm].[task] c JOIN [pm].[workspace_status] st ON st.id = c.status_id
-    WHERE c.parent_task_id = @task_id ORDER BY c.sort_order, c.id;
-
-    SELECT c.item_text, c.is_done FROM [pm].[checklist_item] c WHERE c.task_id = @task_id ORDER BY c.sort_order, c.id;
-
-    SELECT c.id, c.parent_id, NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' ') AS author_name, c.body, c.created_at
-    FROM [pm].[task_comment] c JOIN [hr].[employee] e ON e.id = c.author_id
-    WHERE c.task_id = @task_id ORDER BY c.created_at, c.id;
-
-    SELECT sf.id AS file_id, sf.name, sf.mime_type, sf.size_bytes, CAST(NULL AS NVARCHAR(2000)) AS web_url
-    FROM [core].[attachment] a JOIN [core].[stored_file] sf ON sf.id = a.file_id
-    JOIN [pm].[share_link] s ON s.id = @share_id JOIN [pm].[workspace] w ON w.id = s.workspace_id
-    WHERE a.company_id = w.company_id AND a.entity_type = N'pm.task' AND a.entity_id = @task_id
-    UNION ALL
-    SELECT NULL, xf.name, xf.mime_type, xf.size_bytes, xf.web_url FROM [pm].[task_external_file] xf WHERE xf.task_id = @task_id;
-
-    SELECT f.name, f.field_type, v.field_value
-    FROM [pm].[task_field_value] v JOIN [pm].[custom_field] f ON f.id = v.custom_field_id
-    WHERE v.task_id = @task_id ORDER BY f.sort_order, f.id;
+    EXEC [pm].[usp_public_share_task_sets] @share_id = @share_id, @task_id = @task_id;
 END

@@ -36,9 +36,11 @@ def list_templates(kind: Literal["workflow", "status"] = "workflow", db: Db = De
 
 @router.get("/people", response_model=Paginated[PersonOut])
 def list_people(q: str | None = None, workspace_id: int | None = Query(None, alias="workspaceId"),
+                task_id: int | None = Query(None, alias="taskId", description="Only the people who can see this "
+                                            "task: the comment mention picker (others cannot be mentioned)."),
                 paging: PageParams = Depends(page_params), db: Db = Depends(get_db),
                 ctx: RequestContext = Depends(VIEW)) -> dict:
-    return c.list_people(db, ctx, q, workspace_id, paging)
+    return c.list_people(db, ctx, q, workspace_id, paging, task_id)
 
 
 # --------------------------------------------------------------------------- workspaces

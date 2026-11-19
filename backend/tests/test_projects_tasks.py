@@ -25,6 +25,61 @@ def team(db, client, company):
     return {"dept": dept, "ws": ws, **people}
 
 
+def test_checklist(client, team):
+    """Test Run row 14.12: a task's checklist (add, tick, rename, reorder, delete; at most 20), changed by team
+    leaders and above, the creator and the assignees, and kept in the task's History."""
+    lead, contributor, other = team["lead"], team["contributor"], team["other"]
+    task = pm.task(client, lead["headers"], team["ws"]["id"], name="Release checklist",
+                   assigneeIds=[str(contributor["employee_id"])])
+    url = f"{API}/tasks/{task['id']}/checklist"
+
+    def add(text, headers=contributor["headers"]):
+        r = client.post(url, json={"itemText": text}, headers=headers)
+        assert r.status_code == 201, r.text
+        return r.json()["data"]
+
+    first, second = add("Write notes"), add("Tag the build")
+    assert second["sortOrder"] > first["sortOrder"] and first["isDone"] is False
+    # A contributor neither assigned nor its creator cannot change it (in this private workspace they do not
+    # even see the task).
+    assert client.post(url, json={"itemText": "Mine"}, headers=other["headers"]).status_code == 404
+
+    def put(item, **changes):
+        body = {"itemText": item["itemText"], "isDone": item["isDone"], "sortOrder": item["sortOrder"],
+                "rowVersion": item["rowVersion"], **changes}
+        r = client.put(f"{API}/checklist-items/{item['id']}", json=body, headers=contributor["headers"])
+        assert r.status_code == 200, r.text
+        return r.json()["data"]
+
+    first = put(first, isDone=True)
+    first = put(first, itemText="Write the release notes")
+    # Reorder: the two swap places.
+    a, b = first["sortOrder"], second["sortOrder"]
+    first, second = put(first, sortOrder=b), put(second, sortOrder=a)
+    stale = client.put(f"{API}/checklist-items/{first['id']}", json={"itemText": "x", "rowVersion": second["rowVersion"]},
+                       headers=contributor["headers"])
+    assert stale.status_code == 409
+    detail = client.get(f"{API}/tasks/{task['id']}", headers=lead["headers"]).json()["data"]
+    assert [(c["itemText"], c["isDone"]) for c in detail["checklist"]] == [
+        ("Tag the build", False), ("Write the release notes", True)]
+    assert detail["checklistCount"] == 2 and detail["checklistDoneCount"] == 1
+    assert client.delete(f"{API}/checklist-items/{second['id']}", headers=contributor["headers"]).status_code == 204
+
+    history = client.get(f"{API}/tasks/{task['id']}/activity", params={"pageSize": 50},
+                         headers=lead["headers"]).json()["data"]
+    lines = [(h["actionName"], h["oldValue"], h["newValue"]) for h in history if h["fieldName"] == "checklist"]
+    assert lines == [("checklist_delete", "Tag the build", None),
+                     ("checklist_rename", "Write notes", "Write the release notes"),
+                     ("checklist_done", None, "Write notes"),
+                     ("checklist_add", None, "Tag the build"),
+                     ("checklist_add", None, "Write notes")]
+
+    for n in range(19):
+        add(f"Item {n}", lead["headers"])
+    full = client.post(url, json={"itemText": "One too many"}, headers=lead["headers"])
+    assert full.status_code == 409 and full.json()["code"] == "CHECKLIST_FULL"
+
+
 def test_task_lifecycle(client, team):
     lead, contributor, owner = team["lead"], team["contributor"], team["owner"]
     ws = team["ws"]
@@ -337,7 +392,8 @@ def test_covers(client, db, team):
     ws = r.json()["data"]
     assert ws["coverFileId"] == banner["id"] and ws["cover"]["name"] == "banner.png"
     assert client.get(ws["cover"]["url"]).content == factories.PNG_BYTES
-    listed = client.get(f"{API}/workspaces", headers=owner["headers"]).json()["data"]
+    # Searched by name: the first page of a test database's workspaces need not hold this one.
+    listed = client.get(f"{API}/workspaces", params={"q": team["ws"]["name"]}, headers=owner["headers"]).json()["data"]
     assert next(w for w in listed if w["id"] == wid)["cover"]["id"] == banner["id"]
     assert client.put(f"{API}/workspaces/{wid}/cover", json={"fileId": None, "rowVersion": ws["rowVersion"]},
                       headers=lead["headers"]).status_code == 403

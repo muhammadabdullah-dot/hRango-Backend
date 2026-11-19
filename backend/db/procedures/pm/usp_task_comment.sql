@@ -87,6 +87,19 @@ BEGIN
     IF EXISTS (SELECT 1 FROM @mn m WHERE m.task_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM [pm].[fn_task_access](@company_id, @actor_user_id) a WHERE a.task_id = m.task_id))
         THROW 50400, N'mentions|A mentioned task was not found.', 1;
+    -- Only people who can see the task are mentioned: anyone else would be told about a task that does not
+    -- open for them (Test Run row 14.38). The mention picker offers only them (GET /people?taskId=).
+    DECLARE @blind NVARCHAR(400) = (
+        SELECT TOP 1 ISNULL(NULLIF(CONCAT(e.first_name, N' ', e.last_name), N' '), N'Someone')
+        FROM @mn m JOIN [hr].[employee] e ON e.id = m.employee_id
+        WHERE NOT EXISTS (SELECT 1 FROM [pm].[fn_task_viewers](@company_id, @task_id) v WHERE v.employee_id = m.employee_id)
+        ORDER BY e.first_name, e.last_name);
+    IF @blind IS NOT NULL
+    BEGIN
+        DECLARE @blind_message NVARCHAR(2048) =
+            CONCAT(N'mentions|MENTION_NOT_ALLOWED|', @blind, N' cannot see this task, so they cannot be mentioned on it.');
+        THROW 50400, @blind_message, 1;
+    END
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     IF @id IS NULL

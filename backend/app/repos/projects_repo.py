@@ -14,9 +14,9 @@ def list_templates(db: Db, template_kind: str) -> tuple[Rows, Rows]:
 
 
 def list_people(db: Db, company_id: int, actor_user_id: int, search: str | None, workspace_id: int | None,
-                page: int, page_size: int) -> tuple[int, Rows]:
+                page: int, page_size: int, task_id: int | None = None) -> tuple[int, Rows]:
     total, rows = db.call_sets("pm.usp_people_list", company_id=company_id, actor_user_id=actor_user_id, search=search,
-                               workspace_id=workspace_id, page=page, page_size=page_size)
+                               workspace_id=workspace_id, task_id=task_id, page=page, page_size=page_size)
     return total[0]["total"], rows
 
 
@@ -83,9 +83,10 @@ def list_members(db: Db, company_id: int, actor_user_id: int, workspace_id: int)
                    workspace_id=workspace_id)
 
 
-def save_members(db: Db, company_id: int, actor_user_id: int, workspace_id: int, members: str) -> Rows:
+def save_members(db: Db, company_id: int, actor_user_id: int, workspace_id: int, members: str,
+                 existing_only: bool = False) -> Rows:
     return db.call("pm.usp_workspace_member_save", company_id=company_id, actor_user_id=actor_user_id,
-                   workspace_id=workspace_id, members=members)
+                   workspace_id=workspace_id, members=members, existing_only=existing_only)
 
 
 def delete_member(db: Db, company_id: int, actor_user_id: int, workspace_id: int, employee_id: int) -> None:

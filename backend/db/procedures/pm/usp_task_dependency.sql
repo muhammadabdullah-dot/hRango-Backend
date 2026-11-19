@@ -117,23 +117,43 @@ BEGIN
     IF @item_text IS NULL OR @item_text = N''
         THROW 50400, N'itemText|Checklist item text is required.', 1;
 
+    -- The task's History: an item added, ticked or unticked, renamed (a new place alone is not logged).
+    DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @old_text NVARCHAR(500), @old_done BIT;
     IF @id IS NULL
     BEGIN
         IF (SELECT COUNT(*) FROM [pm].[checklist_item] WHERE task_id = @task_id) >= 20
             THROW 50409, N'itemText|CHECKLIST_FULL|A task can have at most 20 checklist items.', 1;
-        INSERT [pm].[checklist_item] (task_id, item_text, is_done, sort_order, created_by)
-        VALUES (@task_id, @item_text, ISNULL(@is_done, 0),
-                ISNULL(@sort_order, ISNULL((SELECT MAX(sort_order) FROM [pm].[checklist_item] WHERE task_id = @task_id), 0) + 10), @actor_user_id);
-        SET @id = SCOPE_IDENTITY();
+        BEGIN TRAN;
+            INSERT [pm].[checklist_item] (task_id, item_text, is_done, sort_order, created_by)
+            VALUES (@task_id, @item_text, ISNULL(@is_done, 0),
+                    ISNULL(@sort_order, ISNULL((SELECT MAX(sort_order) FROM [pm].[checklist_item] WHERE task_id = @task_id), 0) + 10), @actor_user_id);
+            SET @id = SCOPE_IDENTITY();
+            INSERT [core].[audit_log] (entity_type, entity_id, field_name, new_value, action_name, performed_by_user_id, performed_at)
+            VALUES (N'pm.task', @task_id, N'checklist', LEFT(@item_text, 200), N'checklist_add', @actor_user_id, @now);
+        COMMIT;
     END
     ELSE
     BEGIN
-        UPDATE [pm].[checklist_item]
-        SET item_text = @item_text, is_done = ISNULL(@is_done, 0), sort_order = ISNULL(@sort_order, sort_order),
-            updated_at = SYSUTCDATETIME(), updated_by = @actor_user_id
-        WHERE id = @id AND row_version = @row_version;
-        IF @@ROWCOUNT = 0
-            THROW 50409, N'Someone else changed this checklist item. Reload it and try again', 1;
+        SELECT @old_text = item_text, @old_done = is_done FROM [pm].[checklist_item] WHERE id = @id;
+        BEGIN TRAN;
+            UPDATE [pm].[checklist_item]
+            SET item_text = @item_text, is_done = ISNULL(@is_done, 0), sort_order = ISNULL(@sort_order, sort_order),
+                updated_at = SYSUTCDATETIME(), updated_by = @actor_user_id
+            WHERE id = @id AND row_version = @row_version;
+            IF @@ROWCOUNT = 0
+                THROW 50409, N'Someone else changed this checklist item. Reload it and try again', 1;
+            IF @old_text <> @item_text
+                INSERT [core].[audit_log] (entity_type, entity_id, field_name, old_value, new_value, action_name,
+                                           performed_by_user_id, performed_at)
+                VALUES (N'pm.task', @task_id, N'checklist', LEFT(@old_text, 200), LEFT(@item_text, 200), N'checklist_rename',
+                        @actor_user_id, @now);
+            IF @old_done <> ISNULL(@is_done, 0)
+                INSERT [core].[audit_log] (entity_type, entity_id, field_name, new_value, action_name, performed_by_user_id,
+                                           performed_at)
+                VALUES (N'pm.task', @task_id, N'checklist', LEFT(@item_text, 200),
+                        CASE WHEN ISNULL(@is_done, 0) = 1 THEN N'checklist_done' ELSE N'checklist_undone' END,
+                        @actor_user_id, @now);
+        COMMIT;
     END
 
     SELECT c.id, c.task_id, c.item_text, c.is_done, c.sort_order, c.row_version FROM [pm].[checklist_item] c WHERE c.id = @id;
@@ -147,6 +167,7 @@ CREATE OR ALTER PROCEDURE [pm].[usp_checklist_item_delete]
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET XACT_ABORT ON;
 
     DECLARE @task_id BIGINT = (SELECT task_id FROM [pm].[checklist_item] WHERE id = @id);
     DECLARE @ws BIGINT, @rank INT, @me BIGINT;
@@ -157,5 +178,10 @@ BEGIN
                                           OR EXISTS (SELECT 1 FROM [pm].[task_assignee] WHERE task_id = @task_id AND employee_id = @me)))
         THROW 50403, N'Only team leaders and above, the creator or the assignees can change the checklist.', 1;
 
-    DELETE [pm].[checklist_item] WHERE id = @id;
+    DECLARE @text NVARCHAR(500) = (SELECT item_text FROM [pm].[checklist_item] WHERE id = @id);
+    BEGIN TRAN;
+        DELETE [pm].[checklist_item] WHERE id = @id;
+        INSERT [core].[audit_log] (entity_type, entity_id, field_name, old_value, action_name, performed_by_user_id, performed_at)
+        VALUES (N'pm.task', @task_id, N'checklist', LEFT(@text, 200), N'checklist_delete', @actor_user_id, SYSUTCDATETIME());
+    COMMIT;
 END

@@ -196,6 +196,50 @@ def test_member_roles_allow_and_deny(db, client, company, team):
     assert dup.status_code == 409 and dup.json()["code"] == "LIST_DUPLICATE"
 
 
+def test_change_member_role(db, client, company, team):
+    """Test Run row 14.32: members are invited with a role and their role can be changed afterwards, with the
+    rules the procedure enforces: admins and HR manage roles, only an admin gives or takes the workspace admin
+    role, the owner stays an admin, and a change of role never adds someone."""
+    wid, dept = team["ws"]["id"], team["dept"]
+    owner, hr, lead = team["owner"], team["hr"], team["lead"]
+    joiner, helper, stranger = (pm.person(db, client, company, dept, first_name=n) for n in ("Joiner", "Helper", "Nobody"))
+    url = f"{API}/workspaces/{wid}/members"
+
+    invited = client.post(url, json={"members": [{"employeeId": str(joiner["employee_id"]), "memberRole": "team_leader"},
+                                                 {"employeeId": str(helper["employee_id"]), "memberRole": "manager"}]},
+                          headers=hr["headers"])
+    assert invited.status_code == 200, invited.text
+    roles = {m["employeeId"]: m["memberRole"] for m in invited.json()["data"]}
+    assert roles[str(joiner["employee_id"])] == "team_leader" and roles[str(helper["employee_id"])] == "manager"
+    # The role decides at once: a team leader adds tasks, a contributor does not.
+    assert client.post(f"{API}/tasks", json={"workspaceId": wid, "name": "Joiner's"},
+                       headers=joiner["headers"]).status_code == 201
+
+    def patch(who, role, headers):
+        return client.patch(f"{url}/{who['employee_id']}", json={"memberRole": role}, headers=headers)
+
+    demoted = patch(joiner, "contributor", hr["headers"])
+    assert demoted.status_code == 200, demoted.text
+    assert {m["employeeId"]: m["memberRole"] for m in demoted.json()["data"]}[str(joiner["employee_id"])] == "contributor"
+    assert client.post(f"{API}/tasks", json={"workspaceId": wid, "name": "Again"},
+                       headers=joiner["headers"]).status_code == 403
+    assert patch(joiner, "manager", lead["headers"]).status_code == 403  # team leaders do not manage members
+    assert patch(joiner, "workspace_admin", hr["headers"]).status_code == 403  # only an admin makes admins
+    assert patch(joiner, "workspace_admin", owner["headers"]).status_code == 200
+    assert patch(joiner, "contributor", hr["headers"]).status_code == 403  # nor changes an admin's role
+    assert patch(joiner, "hr", owner["headers"]).status_code == 200
+    assert patch(owner, "manager", owner["headers"]).status_code == 409  # the owner stays a workspace admin
+    unknown = client.patch(f"{url}/{stranger['employee_id']}", json={"memberRole": "contributor"},
+                           headers=owner["headers"])
+    assert unknown.status_code == 404
+    listed = client.get(url, headers=owner["headers"]).json()["data"]
+    assert str(stranger["employee_id"]) not in [m["employeeId"] for m in listed]
+    bad = client.patch(f"{url}/{helper['employee_id']}", json={"memberRole": "boss"}, headers=owner["headers"])
+    assert bad.status_code == 422
+    for person in (joiner, helper):
+        assert client.delete(f"{url}/{person['employee_id']}", headers=owner["headers"]).status_code == 204
+
+
 def test_statuses_features_and_row_versions(client, team):
     owner = team["owner"]
     ws = pm.workspace(client, owner["headers"], team["dept"], owner["employee_id"], privacy="workspace")

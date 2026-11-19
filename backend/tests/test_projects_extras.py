@@ -297,7 +297,11 @@ def test_public_share_page(client, team):
                      description="Go live", assigneeIds=[str(contributor["employee_id"])])
     child = pm.task(client, lead["headers"], team["ws"]["id"], name="Press release", parentTaskId=parent["id"])
     other = pm.task(client, lead["headers"], team["ws"]["id"], name="Unrelated")
-    share = _share(client, manager["headers"], parent["id"], maxAccess=3)
+    item = client.post(f"{API}/tasks/{parent['id']}/checklist", json={"itemText": "Book the hall"},
+                       headers=lead["headers"])
+    assert item.status_code == 201, item.text
+    share = _share(client, manager["headers"], parent["id"], maxAccess=3,
+                   properties=["assignee", "due_date", "description", "comments", "subtasks"])
     token = share["token"]
 
     page = client.get(f"/api/public/shares/{token}")  # no sign-in
@@ -308,17 +312,23 @@ def test_public_share_page(client, team):
     assert set(rows) == {"Launch", "Press release"}
     assert len(rows["Launch"]["assignees"]) == 1 and rows["Launch"]["assignees"][0].startswith("Contributor")
     assert rows["Launch"]["dueDate"] == "2030-05-01" and rows["Launch"]["priority"] is None
+    # The shared task's own details come with the page (Test Run row 14.22's page shows them), in the same access;
+    # only the properties the link shows are filled.
+    shared = data["task"]
+    assert shared["name"] == "Launch" and shared["description"] == "Go live" and shared["comments"] == []
+    assert [s["name"] for s in shared["subtasks"]] == ["Press release"] and shared["checklist"] is None
+    assert shared["priority"] is None and shared["attachments"] is None and shared["tags"] is None
 
-    detail = client.get(f"/api/public/shares/{token}/tasks/{parent['id']}")
+    detail = client.get(f"/api/public/shares/{token}/tasks/{child['id']}")
     assert detail.status_code == 200, detail.text
     d = detail.json()["data"]
-    assert d["description"] == "Go live" and d["comments"] == [] and d["subtasks"] is None
+    assert d["name"] == "Press release" and d["parentTaskId"] == parent["id"] and d["subtasks"] == []
     # A task outside the shared page is not shown (and does not use up an access).
     assert client.get(f"/api/public/shares/{token}/tasks/{other['id']}").status_code == 404
     assert client.get(f"{API}/shares", params={"entityType": "task", "entityId": parent["id"]},
                       headers=manager["headers"]).json()["data"]["accessCount"] == 2
 
-    assert client.get(f"/api/public/shares/{token}/tasks/{child['id']}").status_code == 200  # third access
+    assert client.get(f"/api/public/shares/{token}").status_code == 200  # third access
     spent = client.get(f"/api/public/shares/{token}")
     assert spent.status_code == 410 and spent.json()["code"] == "SHARE_EXHAUSTED"
 
@@ -332,11 +342,60 @@ def test_public_share_page(client, team):
     old = _share(client, manager["headers"], other["id"], validFrom="2020-01-01T00:00:00Z", validTo="2020-02-01T00:00:00Z")
     expired = client.get(f"/api/public/shares/{old['token']}")
     assert expired.status_code == 410 and expired.json()["code"] == "SHARE_EXPIRED"
+    later = client.put(f"{API}/shares", json={"entityType": "task", "entityId": other["id"], "isPublic": True,
+                                              "validFrom": "2099-01-01T00:00:00Z", "rowVersion": old["rowVersion"]},
+                       headers=manager["headers"])
+    assert later.status_code == 200, later.text
+    early = client.get(f"/api/public/shares/{old['token']}")
+    assert early.status_code == 410 and early.json()["code"] == "SHARE_NOT_STARTED"
+    assert early.json()["message"] == "This link is not active yet."
 
     closed = _share(client, manager["headers"], child["id"], isPublic=False)
     for path in (f"/api/public/shares/{closed['token']}", "/api/public/shares/no-such-token-here"):
         r = client.get(path)
         assert r.status_code == 404 and r.json()["code"] == "SHARE_NOT_FOUND"
+
+
+def test_public_share_shows_only_what_the_link_allows(client, team):
+    """The page shows the properties the link allows: subtasks only with "Subtask" ticked (also when opened by id),
+    the checklist only with "Checklists", and a link that does not open tasks still shows its own task."""
+    lead, manager = team["lead"], team["manager"]
+    wid = team["ws"]["id"]
+    parent = pm.task(client, lead["headers"], wid, name="Kick-off", priority="high", description="Hidden text")
+    child = pm.task(client, lead["headers"], wid, name="Agenda", parentTaskId=parent["id"])
+    assert client.post(f"{API}/tasks/{parent['id']}/checklist", json={"itemText": "Invite"},
+                       headers=lead["headers"]).status_code == 201
+    share = _share(client, manager["headers"], parent["id"], properties=["priority", "checklists"],
+                   allowOpenTasks=False)
+    page = client.get(f"/api/public/shares/{share['token']}").json()["data"]
+    assert [t["name"] for t in page["tasks"]] == ["Kick-off"] and page["allowOpenTasks"] is False
+    shared = page["task"]
+    assert shared["priority"] == "high" and shared["description"] is None and shared["subtasks"] is None
+    assert shared["checklist"] == [{"itemText": "Invite", "isDone": False}] and shared["assignees"] is None
+    # Not on the page: a hidden subtask is not found; a link that does not open tasks says so.
+    assert client.get(f"/api/public/shares/{share['token']}/tasks/{child['id']}").status_code == 404
+    closed = client.get(f"/api/public/shares/{share['token']}/tasks/{parent['id']}")
+    assert closed.status_code == 403 and closed.json()["code"] == "SHARE_TASKS_CLOSED"
+
+    # A list's link: its top-level tasks only, without "Subtask"; a list share has no task of its own.
+    lst = client.post(f"{API}/workspaces/{wid}/lists", json={"name": f"Shared {factories.tag()}"},
+                      headers=manager["headers"])
+    assert lst.status_code == 201, lst.text
+    top = pm.task(client, lead["headers"], wid, name="In the list", taskListId=lst.json()["data"]["id"])
+    pm.task(client, lead["headers"], wid, name="Its subtask", parentTaskId=top["id"])
+    body = {"entityType": "task_list", "entityId": lst.json()["data"]["id"], "isPublic": True,
+            "properties": ["due_date"]}
+    r = client.put(f"{API}/shares", json=body, headers=manager["headers"])
+    assert r.status_code == 200, r.text
+    listed = client.get(f"/api/public/shares/{r.json()['data']['token']}").json()["data"]
+    assert listed["entityType"] == "list" and listed["task"] is None
+    assert [t["name"] for t in listed["tasks"]] == ["In the list"]
+    with_subtasks = client.put(f"{API}/shares", json={**body, "properties": ["subtasks"],
+                                                      "rowVersion": r.json()["data"]["rowVersion"]},
+                               headers=manager["headers"])
+    assert with_subtasks.status_code == 200, with_subtasks.text
+    listed = client.get(f"/api/public/shares/{r.json()['data']['token']}").json()["data"]
+    assert sorted(t["name"] for t in listed["tasks"]) == ["In the list", "Its subtask"]
 
 
 # --------------------------------------------------------------------------- T7 recents and dashboards
