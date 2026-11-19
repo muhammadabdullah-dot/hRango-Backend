@@ -93,7 +93,13 @@ BEGIN
                 -- Employee is what everyone also holds, so it names a person only when it is all they hold.
                 ORDER BY CASE WHEN r.code = N'employee' THEN 1 ELSE 0 END,
                          (SELECT COUNT(*) FROM [auth].[role_permission] rp WHERE rp.role_id = r.id) DESC, r.name),
-               N'') AS role_name
+               N'') AS role_name,
+           u.is_account_owner,
+           -- What the organisation's subscription lets its people do (plat.usp_subscription_access_refresh):
+           -- full, read_only or locked; full when the company is on no subscription.
+           ISNULL((SELECT TOP 1 x.access FROM [plat].[customer_company] cc
+                   JOIN [plat].[subscription] x ON x.customer_id = cc.customer_id AND x.status <> N'cancelled'
+                   WHERE cc.company_id = @company_id ORDER BY x.id DESC), N'full') AS billing_access
     FROM [auth].[user_account] u
     LEFT JOIN [hr].[employee] e ON e.id = u.employee_id
     WHERE u.id = @user_id;

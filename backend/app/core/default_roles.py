@@ -16,7 +16,7 @@ from fnmatch import fnmatchcase
 
 from app.core.permissions import catalogue_rows
 
-ADMIN_AREAS = ("access.*", "organisation.*", "integrations.*")
+ADMIN_AREAS = ("access.*", "organisation.*", "integrations.*", "billing.*")
 # Executives see salaries (open question E6, decided 2 Nov 2026). CNIC, bank and health details stay private.
 EXECUTIVE_PAY = ["employees.salary.*", "employees.contracts.*", "payroll.dashboard.*", "payroll.payrolls.*",
                  "payroll.daily_wages.*", "payroll.salary_sheet.*", "payroll.payslips.*", "payroll.salary_revision.*",
@@ -110,7 +110,9 @@ ROLES = [
      "description": "All HR modules for the whole company. No user or role administration.",
      # No new companies: the creator becomes that company's administrator, with users, roles and webhooks
      # (BE-06 b). Company Administrators and the Account Owner add companies.
-     "grants": [("*", "company")], "exclude": ["access.*", "integrations.*", "organisation.companies.create"]},
+     "grants": [("*", "company")],
+     # Billing is the Account Owner's and the Company Administrators', not HR's.
+     "exclude": ["access.*", "integrations.*", "billing.*", "organisation.companies.create"]},
     {"code": "hr_officer", "name": "HR Officer",
      "description": "Day-to-day HR work for the whole company: no settings, deletes, payroll, salaries or budgets.",
      "grants": [("*", "company")],

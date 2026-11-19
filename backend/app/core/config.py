@@ -67,7 +67,8 @@ class Settings(BaseSettings):
     # set up: mails are not sent and their status reads "disabled". app/core/mail.py.
     mail_enabled: bool = False
     # "smtp" (any provider: SES, SendGrid, Mailgun and Microsoft 365 all speak SMTP), or "file", which writes
-    # each message as an .eml file to MAIL_FILE_DIR instead (development: open them in any mail program).
+    # each message as an .eml file to MAIL_FILE_DIR instead (development: open them in any mail program), with an
+    # .html copy beside it that a browser opens.
     mail_backend: Literal["smtp", "file"] = "smtp"
     mail_file_dir: str = ""
     smtp_host: str = ""
@@ -83,6 +84,16 @@ class Settings(BaseSettings):
     mail_reply_to: str = ""
     # The web app's address as people open it, e.g. https://app.example.com: links in e-mails start here.
     app_public_url: str = "http://localhost:5190"
+
+    # Billing (app/services/billing_service.py). Who invoices are from, as printed on them; the bank account
+    # customers pay into (shown on Billing and in invoice e-mails; several lines, "\n" between them); and where
+    # staff are told that a bank transfer proof is waiting (blank: nobody is e-mailed, the Platform portal still
+    # lists it).
+    billing_seller_name: str = "hRango"
+    billing_seller_address: str = ""
+    billing_seller_tax_number: str = ""
+    billing_bank_details: str = ""
+    billing_notify_email: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

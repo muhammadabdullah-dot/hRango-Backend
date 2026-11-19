@@ -3,6 +3,8 @@ backend folder:
 
   .venv\\Scripts\\python.exe -m scripts.nightly
 
+  0. billing      once for the platform, before the companies: renewal invoices, trials that end, read-only and
+                  locked access for unpaid invoices, and the billing e-mails (app/services/billing_service.py)
   1. attendance   re-processes yesterday's and today's time sheets (as scripts/process_attendance.py)
   2. documents    tells employees about documents expiring within 30 days, once per document
                   (hr.usp_employee_document_expiry_notify; also published as employees.document_expiring)
@@ -21,6 +23,8 @@ import pyodbc
 
 from app.core import files
 from app.core.config import settings
+from app.core.db import Db
+from app.services import billing_service
 
 JOBS = (
     ("attendance", "SET NOCOUNT ON; DECLARE @n INT; EXEC att.usp_timesheet_process @company_id = ?, @from_date = ?, "
@@ -35,9 +39,16 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     conn = pyodbc.connect(settings.db_url, autocommit=True)
     cur = conn.cursor()
+    failed = 0
+    # Billing first, once for the platform; a company it restricts tonight still gets tonight's jobs.
+    try:
+        notices = billing_service.run_daily(Db(conn))
+        print(f"billing: {len(notices)} billing e-mails queued")
+    except pyodbc.Error as exc:
+        failed += 1
+        print(f"billing: FAILED {exc.args[-1] if exc.args else exc}")
     # Companies of a suspended or cancelled organisation get no jobs (roadmap 0.3); their data stays as it was.
     companies = cur.execute("SELECT id, name FROM org.company WHERE plat.fn_company_blocked(id) = 0 ORDER BY id").fetchall()
-    failed = 0
     for company_id, name in companies:
         # "Today" is the company's own date, not this server's (a company in Dubai or London).
         today = cur.execute("SELECT CAST(att.fn_company_now(?) AS DATE)", company_id).fetchval() or date.today()

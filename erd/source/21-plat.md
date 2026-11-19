@@ -43,6 +43,10 @@ customer                              an organisation that uses hRango (shown as
   country           {NVARCHAR(100)} {NULL}
   status            {NVARCHAR(20)} {NN}    active, suspended, cancelled; anything but active stops its people signing in
   notes             {NVARCHAR(1000)} {NULL}
+  billing_name      {NVARCHAR(200)} {NULL}   legal name on invoices (default: name)
+  billing_email     {NVARCHAR(254)} {NULL}   invoices and reminders go here (default: contact_email)
+  billing_address   {NVARCHAR(500)} {NULL}
+  tax_number        {NVARCHAR(50)} {NULL}    NTN / STRN for tax invoices
   UNIQUE (name)
 
 customer_company                      which customer owns which company
@@ -66,11 +70,13 @@ subscription                          a customer on a plan; at most one that is 
   customer_id       FK customer
   plan_id           FK plan
   billing_cycle     {NVARCHAR(10)} {NN}    monthly, annual
-  status            {NVARCHAR(20)} {NN}    trial, active, past_due, cancelled
+  status            {NVARCHAR(20)} {NN}    trial, active, past_due, expired (trial ended unpaid), cancelled
   amount            {DECIMAL(18,2)} {NN}   per billing cycle
   start_date        {NN}
-  renews_on         {DATE} {NULL}
+  renews_on         {DATE} {NULL}          next renewal; the end of a trial
   cancelled_on      {DATE} {NULL}
+  access            {NVARCHAR(20)} {NN}    full, read_only, locked: what the customer's people may do (plat.usp_billing_run)
+  access_since      {DATE} {NULL}
   INDEX (status)
 
 invoice                               what a customer is billed; overdue is worked out from due_date
@@ -84,8 +90,38 @@ invoice                               what a customer is billed; overdue is work
   status            {NVARCHAR(20)} {NN}    issued, paid, void
   paid_on           {DATE} {NULL}
   payment_reference {NVARCHAR(100)} {NULL}
+  source            {NVARCHAR(20)} {NN}    manual (staff), renewal (issued by plat.usp_billing_run)
+  period_start      {DATE} {NULL}          the subscription period it pays for
+  period_end        {DATE} {NULL}
   UNIQUE (number)
   INDEX (status, due_date)
+
+payment_submission                    a customer's "I paid by bank transfer" with its proof, for staff to confirm
+  id                PK
+  invoice_id        FK invoice
+  customer_id       FK customer
+  company_id        FK company               the company it was sent from (the proof file is that company's)
+  submitted_by      FK user_account
+  method            {NVARCHAR(30)} {NN}    bank_transfer
+  reference         {NVARCHAR(100)} {NN}
+  paid_on           {DATE} {NN}
+  amount            {DECIMAL(18,2)} {NN}
+  file_id           FK stored_file {NULL}
+  note              {NVARCHAR(500)} {NULL}
+  status            {NVARCHAR(20)} {NN}    pending, accepted, rejected
+  review_note       {NVARCHAR(500)} {NULL}
+  reviewed_by       FK staff_account {NULL}
+  reviewed_at       {DATETIME2(0)} {NULL}
+  INDEX (status)
+
+billing_notice                        a billing e-mail sent once (trial ending, invoice due, overdue, read-only, locked)
+  id                PK
+  subscription_id   FK subscription
+  invoice_id        FK invoice {NULL}
+  kind              {NVARCHAR(40)} {NN}
+  ref_date          {DATE} {NN}
+  mailed_at         {DATETIME2(0)} {NULL}  when the e-mail was queued
+  UNIQUE (subscription_id, kind, ref_date)
 
 lead                                  a prospect in the sales pipeline
   id                PK

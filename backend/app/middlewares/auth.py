@@ -4,6 +4,11 @@ Routers depend on `require("module.screen.action")` (or `get_context` for endpoi
 user may call). The token names a session; the session row decides whether it still works.
 The active company is the session's company unless the request sends X-Company-Id, which must be
 one of the user's companies.
+
+Billing access (plat.usp_subscription_access_refresh) applies to every request here: an organisation that is
+read_only may look but not change anything (403 READ_ONLY on any write outside Billing, sign-in, uploads and the
+inbox); one that is locked lets only its Account Owner in, to Billing (403 BILLING_LOCKED for everything else; signing
+in and /auth/me still answer, so the web app can say why).
 """
 from dataclasses import dataclass, field, replace
 
@@ -11,7 +16,7 @@ from fastapi import Depends, Header, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.db import Db, get_db
-from app.core.errors import forbidden, unauthenticated
+from app.core.errors import AppError, forbidden, unauthenticated
 from app.core.permissions import CODES
 from app.core.security import read_token
 from app.repos import auth_repo
@@ -33,11 +38,39 @@ class RequestContext:
     photo_file_id: int | None = None
     # Scopes the checked permission is held with (own, team, department, branch, selected_units, company).
     scopes: frozenset[str] = field(default_factory=frozenset)
+    is_account_owner: bool = False
+    # What the organisation's subscription allows: full, read_only or locked.
+    billing_access: str = "full"
 
     @property
     def sees_company(self) -> bool:
         """True when the checked permission reaches everyone in the company."""
         return "company" in self.scopes
+
+
+# Paths (under /api) that billing access does not close: sign-in and /auth/me always; Billing and uploads (a bank
+# transfer proof) for whoever may still use them; the inbox (marking notifications read) while read-only.
+_ALWAYS_OPEN = ("/api/auth",)
+_OPEN_WHEN_LOCKED = ("/api/auth", "/api/billing", "/api/files", "/api/organisation/plan")
+_WRITES_OPEN_WHEN_READ_ONLY = ("/api/auth", "/api/billing", "/api/files", "/api/inbox", "/api/access/me")
+READ_ONLY_MESSAGE = ("Your organisation is read-only because a payment is overdue. You can view and export, but changes "
+                     "are paused until it is paid.")
+LOCKED_MESSAGE = ("Your organisation's access is paused because a payment is overdue. The Account Owner can restore it "
+                  "from Billing.")
+
+
+def _under(path: str, prefixes: tuple[str, ...]) -> bool:
+    return any(path == p or path.startswith(p + "/") for p in prefixes)
+
+
+def _billing_gate(request: Request, access: str, is_owner: bool) -> None:
+    path = request.url.path
+    if access == "locked":
+        if not _under(path, _OPEN_WHEN_LOCKED if is_owner else _ALWAYS_OPEN):
+            raise AppError(403, "BILLING_LOCKED", LOCKED_MESSAGE)
+    elif access == "read_only" and request.method not in ("GET", "HEAD", "OPTIONS"):
+        if not _under(path, _WRITES_OPEN_WHEN_READ_ONLY):
+            raise AppError(403, "READ_ONLY", READ_ONLY_MESSAGE)
 
 
 def get_context(request: Request, creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
@@ -51,10 +84,14 @@ def get_context(request: Request, creds: HTTPAuthorizationCredentials | None = D
     if row is None:
         raise unauthenticated()
     request.state.user_id = row["user_id"]
+    access = row.get("billing_access") or "full"
+    is_owner = bool(row.get("is_account_owner"))
+    _billing_gate(request, access, is_owner)
     return RequestContext(user_id=row["user_id"], company_id=row["company_id"], employee_id=row["employee_id"],
                           session_id=ids[0], name=row["name"],
                           email=row["email"], role_name=row["role_name"], company_name=row["company_name"],
-                          company_logo_file_id=row["company_logo_file_id"], photo_file_id=row["photo_file_id"])
+                          company_logo_file_id=row["company_logo_file_id"], photo_file_id=row["photo_file_id"],
+                          is_account_owner=is_owner, billing_access=access)
 
 
 def require(code: str):

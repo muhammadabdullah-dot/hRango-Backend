@@ -14,7 +14,7 @@ from app.catalogue._actions import ACTION_LABELS
 SCOPES = ("own", "team", "department", "branch", "selected_units", "company")
 
 # Order here is the order on the role screen.
-MODULES = ("organisation", "employees", "access", "integrations", "dashboard", "inbox", "attendance", "roster",
+MODULES = ("organisation", "employees", "access", "integrations", "billing", "dashboard", "inbox", "attendance", "roster",
            "scheduling", "warning", "requests", "leaves", "loans", "payroll", "assets", "offboarding", "manpower",
            "recruitment", "performance", "training", "benefits", "engagement", "projects", "forms")
 

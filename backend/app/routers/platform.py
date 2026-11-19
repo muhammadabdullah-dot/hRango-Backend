@@ -22,6 +22,8 @@ from app.schemas.platform import (
     InvoiceStatusIn,
     LeadIn,
     LeadOut,
+    PaymentReviewIn,
+    PaymentSubmissionOut,
     PlanIn,
     PlanOut,
     StaffAuditOut,
@@ -36,6 +38,7 @@ from app.schemas.platform import (
     SubscriptionOut,
     TicketIn,
     TicketOut,
+    TrialExtendIn,
 )
 
 router = APIRouter(prefix="/platform", tags=["platform"])
@@ -175,6 +178,29 @@ def add_subscription(body: SubscriptionIn, db: Db = Depends(get_db), ctx: StaffC
 def update_subscription(subscription_id: int, body: SubscriptionIn, db: Db = Depends(get_db),
                         ctx: StaffContext = Depends(BILLING)) -> dict:
     return c.save_subscription(db, ctx, subscription_id, body)
+
+
+@router.post("/subscriptions/{subscription_id}/extend-trial", response_model=Item[SubscriptionOut])
+def extend_trial(subscription_id: int, body: TrialExtendIn, db: Db = Depends(get_db),
+                 ctx: StaffContext = Depends(BILLING)) -> dict:
+    """A trial, running or ended, gets 1 to 90 more days; its unpaid renewal invoice is voided (a new one is issued a
+    week before the new end) and access is restored."""
+    return c.extend_trial(db, ctx, subscription_id, body)
+
+
+@router.get("/payments", response_model=Paginated[PaymentSubmissionOut])
+def list_payments(status_: str | None = Query(None, alias="status"), paging: PageParams = Depends(page_params),
+                  db: Db = Depends(get_db), _: StaffContext = Depends(BILLING)) -> dict:
+    """Bank transfer proofs organisations sent (status pending, accepted or rejected), the ones waiting first."""
+    return c.list_payments(db, status_, paging)
+
+
+@router.patch("/payments/{submission_id}", response_model=Item[PaymentSubmissionOut])
+def review_payment(submission_id: int, body: PaymentReviewIn, db: Db = Depends(get_db),
+                   ctx: StaffContext = Depends(BILLING)) -> dict:
+    """Accept (its invoice is paid with the proof's date and reference; the organisation is e-mailed a receipt and
+    gets its access back) or reject with a reason (e-mailed to them)."""
+    return c.review_payment(db, ctx, submission_id, body)
 
 
 @router.get("/invoices", response_model=Paginated[InvoiceOut])

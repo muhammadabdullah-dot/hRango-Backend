@@ -2,6 +2,7 @@ from datetime import datetime
 
 from pydantic import Field
 
+from app.schemas.billing import BillingState
 from app.schemas.common import ApiModel
 
 
@@ -28,6 +29,9 @@ class AuthUser(ApiModel):
     employee_id: str | None
     # Every permission the user holds in the active company; the frontend hides what is not listed.
     permissions: list[PermissionOut] = []
+    is_account_owner: bool = False
+    # The organisation's subscription: the banner, and read-only or locked access (null: no subscription).
+    billing: BillingState | None = None
 
 
 class AuthSession(ApiModel):

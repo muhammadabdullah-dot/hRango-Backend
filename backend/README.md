@@ -134,6 +134,29 @@ and `tests/test_departments.py` its test.
   `mail.RESULT_OWNERS` copies each send's result back (`pay.usp_mail_outbox_result`: queued -> sent / failed, and
   the run's close e-mail state). A mail gateway can also subscribe to `notification.created`.
 
+## Billing (no payment gateway yet)
+
+Migration 0050, `db/procedures/plat/usp_billing_lifecycle.sql` (the rules are at its top), `app/services/billing_service.py`.
+
+- **Nightly** (`scripts/nightly.py`, step 0, `plat.usp_billing_run`): a renewal invoice 7 days before each subscription
+  renews (a trial's: before it ends; once per period, `invoice.source = renewal` with its period); reminder e-mails
+  (trial ending in 7, 3 and 1 days; due today; 3 and 7 days late); then status and access from unpaid invoices. A
+  free plan (amount 0) is never billed; its trial simply becomes active.
+- **Access** (`plat.subscription.access`, in `auth.usp_session_context`): `full`; `read_only` (a paying customer 14
+  days late, a trial the day after it ends unpaid: 403 `READ_ONLY` on every write outside Billing, sign-in, uploads and
+  the inbox); `locked` (30 days late, a trial a week after it ended: only the Account Owner gets in, to Billing and
+  plan usage; everyone else 403 `BILLING_LOCKED`; `/auth/me` always answers). The grace days are
+  `billing_service.READ_ONLY_AT` / `LOCKED_AT` / `TRIAL_LOCKED_AT`, in step with the procedure's defaults.
+- **Paying**: the organisation's Billing (`/api/billing`, `billing.subscription.*`: Company Administrators, not HR)
+  shows its plan, invoices and billing details, and takes a bank transfer proof (reference, date, amount, an upload
+  of module `billing`). Staff confirm it in the Platform portal (`/api/platform/payments`: accept marks the invoice
+  paid; reject needs a reason, e-mailed). Marking an invoice paid by hand does the same. Either way the subscription
+  moves on to its next period, access comes back at once, and a receipt is e-mailed.
+- **Staff**: `POST /api/platform/subscriptions/{id}/extend-trial` (1 to 90 days; voids the trial's unpaid invoice).
+- **Settings**: `BILLING_SELLER_NAME`, `BILLING_SELLER_ADDRESS`, `BILLING_SELLER_TAX_NUMBER` (printed on invoices),
+  `BILLING_BANK_DETAILS` (the account customers pay into; `\n` between lines) and `BILLING_NOTIFY_EMAIL` (told when a
+  proof arrives). Billing e-mails go to the organisation's billing e-mail, else its contact e-mail.
+
 ## AI and routes without sign-in
 
 - AI routes (request applications, project docs and suggestions) call `app.core.ai.ensure_available()` first.

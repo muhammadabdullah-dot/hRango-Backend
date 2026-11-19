@@ -18,6 +18,8 @@ from app.schemas.platform import (
     InvoiceStatusIn,
     LeadIn,
     LeadOut,
+    PaymentReviewIn,
+    PaymentSubmissionOut,
     PlanIn,
     PlanOut,
     StaffAuditOut,
@@ -30,9 +32,13 @@ from app.schemas.platform import (
     StaffSession,
     SubscriptionIn,
     SubscriptionOut,
+    TrialExtendIn,
     TicketIn,
     TicketOut,
 )
+from app.core.files import file_url
+from app.repos import billing_repo
+from app.services import billing_service
 from app.services import platform_service as s
 
 
@@ -183,7 +189,30 @@ def add_invoice(db: Db, ctx: StaffContext, body: InvoiceIn) -> dict:
 def set_invoice_status(db: Db, ctx: StaffContext, invoice_id: int, body: InvoiceStatusIn) -> dict:
     row = platform_repo.set_invoice_status(db, ctx.staff_id, invoice_id, body.model_dump(by_alias=False),
                                            row_version_in(body.row_version))
+    if row["status"] == "paid":
+        billing_service.mail_receipt(db, invoice_id)
     return {"data": _invoice(row)}
+
+
+def extend_trial(db: Db, ctx: StaffContext, subscription_id: int, body: TrialExtendIn) -> dict:
+    row = billing_repo.extend_trial(db, ctx.staff_id, subscription_id, body.days, row_version_in(body.row_version))
+    return {"data": _subscription(row)}
+
+
+def _payment(row: dict[str, Any]) -> PaymentSubmissionOut:
+    return PaymentSubmissionOut(**{**row, "file_url": file_url(row.get("file_id"), int(row["company_id"])),
+                                   "row_version": row_version_out(row["row_version"])})
+
+
+def list_payments(db: Db, status: str | None, paging: PageParams) -> dict:
+    total, rows = billing_repo.payments(db, status, paging.page, paging.page_size)
+    return paginated(rows, total, paging.page, paging.page_size, _payment)
+
+
+def review_payment(db: Db, ctx: StaffContext, submission_id: int, body: PaymentReviewIn) -> dict:
+    row = billing_service.review_payment(db, ctx.staff_id, submission_id, body.decision, body.note,
+                                         row_version_in(body.row_version))
+    return {"data": _payment(row)}
 
 
 def list_leads(db: Db, q: str | None, stage: str | None, paging: PageParams) -> dict:

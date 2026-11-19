@@ -78,7 +78,8 @@ AS
 BEGIN
     SET NOCOUNT ON;
     SELECT s.id, s.customer_id, c.name AS customer_name, s.plan_id, p.name AS plan_name, s.billing_cycle, s.status,
-           s.amount, s.start_date, s.renews_on, s.cancelled_on, s.created_at, s.updated_at, s.row_version
+           s.amount, s.start_date, s.renews_on, s.cancelled_on, s.access, s.access_since, s.created_at, s.updated_at,
+           s.row_version
     FROM [plat].[subscription] s
     JOIN [plat].[customer] c ON c.id = s.customer_id
     JOIN [plat].[plan] p ON p.id = s.plan_id
@@ -107,7 +108,8 @@ BEGIN
       AND (@pattern IS NULL OR c.name LIKE @pattern);
 
     SELECT s.id, s.customer_id, c.name AS customer_name, s.plan_id, p.name AS plan_name, s.billing_cycle, s.status,
-           s.amount, s.start_date, s.renews_on, s.cancelled_on, s.created_at, s.updated_at, s.row_version
+           s.amount, s.start_date, s.renews_on, s.cancelled_on, s.access, s.access_since, s.created_at, s.updated_at,
+           s.row_version
     FROM [plat].[subscription] s
     JOIN [plat].[customer] c ON c.id = s.customer_id
     JOIN [plat].[plan] p ON p.id = s.plan_id
@@ -137,8 +139,8 @@ BEGIN
     SET XACT_ABORT ON;
     IF @billing_cycle NOT IN (N'monthly', N'annual')
         THROW 50400, N'billingCycle|Choose monthly or annual.', 1;
-    IF @status NOT IN (N'trial', N'active', N'past_due', N'cancelled')
-        THROW 50400, N'status|Choose trial, active, past due or cancelled.', 1;
+    IF @status NOT IN (N'trial', N'active', N'past_due', N'expired', N'cancelled')
+        THROW 50400, N'status|Choose trial, active, past due, expired or cancelled.', 1;
     IF NOT EXISTS (SELECT 1 FROM [plat].[customer] WHERE id = @customer_id)
         THROW 50400, N'customerId|Choose an organisation.', 1;
     IF @renews_on IS NOT NULL AND @renews_on < @start_date
@@ -184,6 +186,9 @@ BEGIN
             WHERE c.id = @customer_id);
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action,
              @entity_type = N'subscription', @entity_ref = @ref, @detail = @audit_detail;
+        -- Status and access follow its unpaid invoices (plat.usp_subscription_access_refresh): a past-due
+        -- subscription stays past due while an invoice is late, whatever status is chosen here.
+        EXEC [plat].[usp_subscription_access_refresh] @subscription_id = @id, @notify = 0;
     COMMIT;
     EXEC [plat].[usp_subscription_get] @id = @id;
 END
@@ -196,7 +201,10 @@ BEGIN
     SET NOCOUNT ON;
     SELECT i.id, i.number, i.customer_id, c.name AS customer_name, i.subscription_id, i.issue_date, i.due_date, i.amount,
            CASE WHEN i.status = N'issued' AND i.due_date < CONVERT(DATE, SYSUTCDATETIME()) THEN N'overdue' ELSE i.status END AS status,
-           i.paid_on, i.payment_reference, i.created_at, i.updated_at, i.row_version
+           i.paid_on, i.payment_reference, i.source, i.period_start, i.period_end,
+           CAST(CASE WHEN EXISTS (SELECT 1 FROM [plat].[payment_submission] ps
+                                  WHERE ps.invoice_id = i.id AND ps.status = N'pending') THEN 1 ELSE 0 END AS BIT) AS proof_pending,
+           i.created_at, i.updated_at, i.row_version
     FROM [plat].[invoice] i JOIN [plat].[customer] c ON c.id = i.customer_id
     WHERE i.id = @id;
     IF @@ROWCOUNT = 0
@@ -221,7 +229,10 @@ BEGIN
     ;WITH rows AS (
         SELECT i.id, i.number, i.customer_id, c.name AS customer_name, i.subscription_id, i.issue_date, i.due_date, i.amount,
                CASE WHEN i.status = N'issued' AND i.due_date < @today THEN N'overdue' ELSE i.status END AS status,
-               i.paid_on, i.payment_reference, i.created_at, i.updated_at, i.row_version
+               i.paid_on, i.payment_reference, i.source, i.period_start, i.period_end,
+               CAST(CASE WHEN EXISTS (SELECT 1 FROM [plat].[payment_submission] ps
+                                      WHERE ps.invoice_id = i.id AND ps.status = N'pending') THEN 1 ELSE 0 END AS BIT) AS proof_pending,
+               i.created_at, i.updated_at, i.row_version
         FROM [plat].[invoice] i JOIN [plat].[customer] c ON c.id = i.customer_id
         WHERE (@customer_id IS NULL OR i.customer_id = @customer_id)
           AND (@pattern IS NULL OR c.name LIKE @pattern OR i.number LIKE @pattern)
@@ -259,11 +270,9 @@ BEGIN
 
     DECLARE @id BIGINT, @number NVARCHAR(30), @ref NVARCHAR(100);
     BEGIN TRAN;
-        SELECT @id = ISNULL(MAX(id), 0) + 1 FROM [plat].[invoice] WITH (UPDLOCK, HOLDLOCK);
-        SET @number = CONCAT(N'INV-', YEAR(@issue_date), N'-', RIGHT(CONCAT(N'0000', @id), 4));
-        INSERT [plat].[invoice] (number, customer_id, subscription_id, issue_date, due_date, amount, status, created_by)
-        VALUES (@number, @customer_id, @subscription_id, @issue_date, @due_date, @amount, N'issued', @actor_id);
-        SET @id = SCOPE_IDENTITY();
+        EXEC [plat].[usp_invoice_issue_internal] @customer_id = @customer_id, @subscription_id = @subscription_id,
+             @issue_date = @issue_date, @due_date = @due_date, @amount = @amount, @actor_id = @actor_id,
+             @id = @id OUTPUT, @number = @number OUTPUT;
         SET @ref = CONVERT(NVARCHAR(30), @id);
         DECLARE @audit_detail NVARCHAR(1000) = (SELECT LEFT(CONCAT(@number, N' · ', name), 1000)
                                           FROM [plat].[customer] WHERE id = @customer_id);
@@ -313,6 +322,24 @@ BEGIN
             THROW 50409, N'Someone else changed this invoice. Reload and try again', 1;
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action,
              @entity_type = N'invoice', @entity_ref = @ref, @detail = @audit_detail;
+        -- A bank transfer proof still waiting is settled with the invoice: accepted when it is paid, rejected when
+        -- it is voided.
+        UPDATE [plat].[payment_submission]
+        SET status = CASE WHEN @status = N'paid' THEN N'accepted' ELSE N'rejected' END,
+            review_note = CASE WHEN @status = N'paid' THEN N'Recorded when the invoice was marked paid.'
+                               ELSE N'The invoice was cancelled.' END,
+            reviewed_by = @actor_id, reviewed_at = SYSUTCDATETIME()
+        WHERE invoice_id = @id AND status = N'pending';
+        -- Paid: the subscription moves on to its next period and gets its access back. Void: access is worked out
+        -- again without it.
+        IF @status = N'paid'
+            EXEC [plat].[usp_invoice_pay_apply] @invoice_id = @id;
+        ELSE
+        BEGIN
+            DECLARE @subscription_id BIGINT = (SELECT subscription_id FROM [plat].[invoice] WHERE id = @id);
+            IF @subscription_id IS NOT NULL
+                EXEC [plat].[usp_subscription_access_refresh] @subscription_id = @subscription_id, @notify = 0;
+        END
     COMMIT;
     EXEC [plat].[usp_invoice_get] @id = @id;
 END

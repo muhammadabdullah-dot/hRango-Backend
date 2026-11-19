@@ -146,7 +146,7 @@ class SubscriptionIn(ApiModel):
     customer_id: int
     plan_id: int
     billing_cycle: Literal["monthly", "annual"]
-    status: Literal["trial", "active", "past_due", "cancelled"]
+    status: Literal["trial", "active", "past_due", "expired", "cancelled"]
     amount: Decimal | None = Field(None, ge=0)
     start_date: date
     renews_on: date | None = None
@@ -165,6 +165,14 @@ class SubscriptionOut(ApiModel):
     start_date: date
     renews_on: date | None
     cancelled_on: date | None
+    # full, read_only or locked (the billing run sets it from unpaid invoices).
+    access: str = "full"
+    access_since: date | None = None
+    row_version: str
+
+
+class TrialExtendIn(ApiModel):
+    days: int = Field(ge=1, le=90)
     row_version: str
 
 
@@ -193,6 +201,45 @@ class InvoiceOut(ApiModel):
     status: str
     paid_on: date | None
     payment_reference: str | None
+    # manual (staff) or renewal (the billing run, for a subscription period)
+    source: str = "manual"
+    period_start: date | None = None
+    period_end: date | None = None
+    # A bank transfer proof is waiting for this invoice (Payments).
+    proof_pending: bool = False
+    row_version: str
+
+
+class PaymentSubmissionOut(ApiModel):
+    id: str
+    invoice_id: str
+    invoice_number: str
+    invoice_amount: float
+    invoice_due: date
+    customer_id: str
+    customer_name: str
+    method: str
+    reference: str
+    paid_on: date
+    amount: float
+    # The proof (a signed link that expires) and its name.
+    file_url: str | None
+    file_name: str | None
+    note: str | None
+    # pending, accepted or rejected
+    status: str
+    review_note: str | None
+    reviewed_at: datetime | None
+    reviewed_by_name: str | None
+    created_at: datetime
+    submitted_by_name: str
+    submitted_by_email: str
+    row_version: str
+
+
+class PaymentReviewIn(ApiModel):
+    decision: Literal["accept", "reject"]
+    note: str | None = Field(None, max_length=500)
     row_version: str
 
 
