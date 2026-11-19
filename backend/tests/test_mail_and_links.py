@@ -149,11 +149,16 @@ def test_the_file_backend_writes_eml_files(db, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "mail_file_dir", str(tmp_path))
     monkeypatch.setattr(settings, "mail_from", "hRango <no-reply@hrango.test>")
     to = f"file.{factories.tag()}@example.test"
-    mail.queue(db, kind="test", to_address=to, subject="On disk", body_html="<p>x</p>")
+    # A long link, which the .eml keeps encoded across lines: the .html copy has it whole.
+    link = "http://localhost:5190/accept-invite#token=" + "a" * 120
+    mail.queue(db, kind="test", to_address=to, subject="On <disk>", body_html=f'<p><a href="{link}">Open</a></p>')
     _drain(db)
     files = list(tmp_path.glob("*.eml"))
     assert len(files) == 1
     assert email.message_from_bytes(files[0].read_bytes(), policy=policy.default)["To"] == to
+    page = files[0].with_suffix(".html").read_text(encoding="utf-8")
+    assert f'href="{link}"' in page
+    assert to in page and "On &lt;disk&gt;" in page
 
 
 def test_mail_settings_are_checked_at_start():

@@ -7,10 +7,12 @@ inside a web request, so a slow mail server never slows the app.
 Two backends (settings.mail_backend):
 - smtp: any provider (Amazon SES, SendGrid, Mailgun, Microsoft 365 and Gmail all speak SMTP), STARTTLS on
   587 or TLS on 465.
-- file: each message is written as an .eml file to settings.mail_file_dir (development and tests).
+- file: each message is written as an .eml file to settings.mail_file_dir (development and tests), with an .html
+  copy beside it that a browser opens with working links.
 
 With mail off (settings.mail_enabled false) a message is recorded as "disabled" and never sent.
 """
+import html
 import logging
 import smtplib
 import ssl
@@ -67,14 +69,31 @@ def build(message: Message) -> EmailMessage:
     return mail
 
 
+def _as_page(mail: EmailMessage, message: Message) -> str:
+    """The file backend's .html copy: who it is to, the subject and date, then the message's own HTML."""
+    head = "".join(
+        f"<div><b>{label}:</b> {html.escape(str(mail[label] or ''))}</div>" for label in ("To", "Subject", "Date")
+    )
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        f"<title>{html.escape(message.subject)}</title></head><body>"
+        '<div style="font:13px/1.6 system-ui,sans-serif;color:#334155;background:#f1f5f9;padding:12px 16px;'
+        f'border-bottom:1px solid #cbd5e1">{head}</div>'
+        f"{message.body_html}</body></html>"
+    )
+
+
 def send(message: Message) -> None:
     """Sends one message now through the configured backend; raises on failure."""
     mail = build(message)
     if settings.mail_backend == "file":
         folder = Path(settings.mail_file_dir or Path(__file__).resolve().parents[2] / "mail-outbox")
         folder.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
-        (folder / f"{stamp}-{message.id or uuid.uuid4().hex[:8]}.eml").write_bytes(bytes(mail))
+        stem = f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%S')}-{message.id or uuid.uuid4().hex[:8]}"
+        (folder / f"{stem}.eml").write_bytes(bytes(mail))
+        # The same message as a page a browser opens: an .eml keeps long lines encoded, so a link copied out of it
+        # breaks; this page's links work as they would in a mail program.
+        (folder / f"{stem}.html").write_text(_as_page(mail, message), encoding="utf-8")
         return
     context = ssl.create_default_context()
     timeout = settings.smtp_timeout_seconds
