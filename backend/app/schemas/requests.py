@@ -326,6 +326,15 @@ class RequestTypeOut(ApiModel):
     sort_order: int | None
 
 
+class ApprovalSummaryOut(ApiModel):
+    """One request type the caller has approvals of (GET /requests/approvals/summary)."""
+    request_type: str
+    request_type_name: str
+    # Requests of the type the Approvals boxes list for the caller, and those waiting for their decision now.
+    total: int
+    waiting: int
+
+
 class StepOut(ApiModel):
     id: str
     purpose: str
@@ -389,8 +398,13 @@ class RequestOut(ApiModel):
     next_approver_id: str | None
     next_approver_name: str | None
     next_approver_kind: str | None
+    # The employee's final authority (a transfer's own): who signs off in the end, not who acted.
     final_authority_id: str | None
     final_authority_name: str | None
+    # Who approved or rejected the latest step (a delegate included): the lists' "Approver" once
+    # nothing waits. None while nobody has decided.
+    decided_by_id: str | None = None
+    decided_by_name: str | None = None
     details: dict[str, Any]
     created_at: datetime
     updated_at: datetime | None

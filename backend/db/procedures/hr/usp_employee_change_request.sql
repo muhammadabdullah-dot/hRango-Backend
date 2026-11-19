@@ -10,11 +10,15 @@ AS RETURN
 SELECT r.id, r.company_id, r.employee_id, e.code AS employee_code,
        LTRIM(RTRIM(CONCAT(e.first_name, N' ', e.last_name))) AS employee_name, r.status, r.changes, r.previous_values,
        r.remarks, r.decided_by_user_id, du.display_name AS decided_by_name, r.decided_at, r.decision_remarks,
-       r.created_at, r.created_by AS created_by_user_id, cu.display_name AS created_by_name, r.updated_at, r.row_version
+       r.created_at, r.created_by AS created_by_user_id, cu.display_name AS created_by_name, r.updated_at, r.row_version,
+       -- The home city asked for and the one before, by name (HR's list shows names, not ids).
+       nc.name AS asked_city_name, pc.name AS previous_city_name
 FROM [hr].[employee_change_request] r
 JOIN [hr].[employee] e ON e.id = r.employee_id
 LEFT JOIN [auth].[user_account] du ON du.id = r.decided_by_user_id
 LEFT JOIN [auth].[user_account] cu ON cu.id = r.created_by
+LEFT JOIN [org].[city] nc ON nc.id = TRY_CAST(JSON_VALUE(r.changes, '$.home_city_id') AS BIGINT)
+LEFT JOIN [org].[city] pc ON pc.id = TRY_CAST(JSON_VALUE(r.previous_values, '$.home_city_id') AS BIGINT)
 WHERE r.company_id = @company_id;
 GO
 
@@ -36,26 +40,32 @@ BEGIN
 END
 GO
 
--- Result set 1: total. Result set 2: the page, newest first.
+-- Result set 1: total. Result set 2: the page, newest first. @search matches the employee's code or name
+-- (Talent Management -> Update Requests).
 CREATE OR ALTER PROCEDURE [hr].[usp_employee_change_request_list]
     @company_id    BIGINT,
     @actor_user_id BIGINT,
     @employee_id   BIGINT = NULL,
     @status        NVARCHAR(30) = NULL,
     @page          INT = 1,
-    @page_size     INT = 50
+    @page_size     INT = 50,
+    @search        NVARCHAR(200) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
 
+    DECLARE @pattern NVARCHAR(500) = CASE WHEN NULLIF(LTRIM(RTRIM(@search)), N'') IS NULL THEN NULL
+        ELSE N'%' + REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(@search)), N'[', N'[[]'), N'%', N'[%]'), N'_', N'[_]') + N'%' END;
     DECLARE @ids TABLE (id BIGINT PRIMARY KEY);
     INSERT @ids
     SELECT r.id
     FROM [hr].[employee_change_request] r
+    JOIN [hr].[employee] e ON e.id = r.employee_id
     JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, N'employees.update_requests.view') v ON v.employee_id = r.employee_id
     WHERE r.company_id = @company_id
       AND (@employee_id IS NULL OR r.employee_id = @employee_id)
       AND (@status IS NULL OR r.status = @status)
+      AND (@pattern IS NULL OR e.code LIKE @pattern OR CONCAT(e.first_name, N' ', e.last_name) LIKE @pattern)
     OPTION (RECOMPILE);
 
     SELECT COUNT(*) AS total FROM @ids;
@@ -139,11 +149,13 @@ BEGIN
                       WHERE v.employee_id = @employee_id);
         SET @title = (SELECT CONCAT(LTRIM(RTRIM(CONCAT(first_name, N' ', last_name))), N' asked to update their details')
                       FROM [hr].[employee] WHERE id = @employee_id);
+        -- The link opens the request on Talent Management -> Update Requests in the web app.
+        DECLARE @link NVARCHAR(500) = CONCAT(N'/talent-management/update-requests?request=', @id);
         SET @who = (SELECT MIN(id) FROM @approvers);
         WHILE @who IS NOT NULL
         BEGIN
             EXEC [core].[usp_notification_add] @quiet = 1, @company_id = @company_id, @user_account_id = @who, @title = @title,
-                 @notification_type = N'employee_update_request', @link = N'/employees/update-requests',
+                 @notification_type = N'employee_update_request', @link = @link,
                  @entity_type = N'hr.employee_change_request', @entity_id = @id;
             SET @who = (SELECT MIN(id) FROM @approvers WHERE id > @who);
         END
@@ -252,7 +264,7 @@ BEGIN
             SET @title = CONCAT(N'Your Update Information request was ', @decision);
             EXEC [core].[usp_notification_add_employee] @quiet = 1, @company_id = @company_id, @employee_id = @employee_id,
                  @title = @title, @body = @remarks, @notification_type = N'employee_update_request',
-                 @link = N'/profile', @entity_type = N'hr.employee_change_request', @entity_id = @id;
+                 @link = N'/my-profile', @entity_type = N'hr.employee_change_request', @entity_id = @id;
         END
     COMMIT;
 

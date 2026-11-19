@@ -194,7 +194,7 @@ BEGIN
         SET @body = CONCAT(REPLACE(@type, N'_', N' '), N' expiry date: ', CONVERT(NVARCHAR(10), @expiry, 23), N'. Please give HR a renewed copy.');
         EXEC [core].[usp_notification_add_employee] @quiet = 1, @company_id = @company_id, @employee_id = @emp,
              @title = @title, @body = @body, @notification_type = N'employee_document',
-             @link = N'/profile/documents', @entity_type = N'hr.employee_document', @entity_id = @id;
+             @link = N'/my-profile?tab=documents', @entity_type = N'hr.employee_document', @entity_id = @id;
         SET @payload = (SELECT CONVERT(NVARCHAR(30), @id) AS documentId, CONVERT(NVARCHAR(30), @emp) AS employeeId,
                                @type AS documentType, @expiry AS expiryDate,
                                CAST(CASE WHEN @expiry < @today THEN 1 ELSE 0 END AS BIT) AS isExpired

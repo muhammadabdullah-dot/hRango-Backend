@@ -169,11 +169,13 @@ def test_expense_claims_reach_payroll_and_leave_it_on_cancel(client, db, org):
         "requests.step_decided", "requests.cancelled"]
     to_manager = fr.notifications(db, org.manager.user_id, int(req["id"]))
     assert [n["type"] for n in to_manager] == ["request_approval", "request_approval"]
-    assert to_manager[0]["link"] == f"/requests/approvals/{req['id']}" and "waiting for your approval" in to_manager[0]["title"]
+    assert to_manager[0]["link"] == f"/requests/expense?tab=approvals&request={req['id']}" and "waiting for your approval" in to_manager[0]["title"]
     assert "cancellation" in to_manager[1]["title"]
+    # A cancellation step opens the type's Cancellations list with the request.
+    assert to_manager[1]["link"] == f"/requests/expense?tab=approvals&view=cancellations&request={req['id']}"
     to_staff = fr.notifications(db, org.staff.user_id, int(req["id"]))
     assert [n["title"].rsplit(" ", 1)[-1] for n in to_staff] == ["approved", "cancelled"]
-    assert to_staff[0]["link"] == f"/requests/expense/{req['id']}"
+    assert to_staff[0]["link"] == f"/requests/expense?request={req['id']}"
     # The inbox shows them too.
     inbox = fr.notifications(db, org.fa.user_id, int(req["id"]))
     assert len(inbox) == 2

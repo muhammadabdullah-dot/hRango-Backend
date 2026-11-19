@@ -188,13 +188,16 @@ def _camel(values: dict[str, Any]) -> dict[str, Any]:
 def _update_request(row: dict[str, Any]) -> UpdateRequestOut:
     changes = json.loads(row["changes"] or "{}")
     previous = json.loads(row["previous_values"] or "{}")
-    return UpdateRequestOut(**{**_rv(row), "changes": _camel(changes),
-                               "previous": _camel({k: previous.get(k) for k in changes})})
+    asked, before = _camel(changes), _camel({k: previous.get(k) for k in changes})
+    if "home_city_id" in changes:
+        # The city by name beside its id, as the screens show it.
+        asked["homeCityName"], before["homeCityName"] = row.get("asked_city_name"), row.get("previous_city_name")
+    return UpdateRequestOut(**{**_rv(row), "changes": asked, "previous": before})
 
 
 def list_update_requests(db: Db, ctx: RequestContext, employee_id: int | None, status: str | None,
-                         paging: PageParams) -> dict:
-    total, rows = s.list_update_requests(db, ctx, employee_id, status, paging.page, paging.page_size)
+                         paging: PageParams, search: str | None = None) -> dict:
+    total, rows = s.list_update_requests(db, ctx, employee_id, status, paging.page, paging.page_size, search)
     return paginated(rows, total, paging.page, paging.page_size, _update_request)
 
 

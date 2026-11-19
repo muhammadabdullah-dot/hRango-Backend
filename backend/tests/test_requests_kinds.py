@@ -120,6 +120,9 @@ def test_shift_swap_asks_the_colleague_first(client, db, org):
     assert r.status_code == 201, r.text
     req = r.json()["data"]
     assert req["nextApproverName"].startswith("Saad") and req["steps"][-1]["isConsent"] is True
+    # The colleague's inbox opens Shift Requests on its Consents list with the request.
+    assert [n["link"] for n in fr.notifications(db, org.staff2.user_id, int(req["id"]))] == [
+        f"/requests/shift?tab=approvals&view=consents&request={req['id']}"]
     r = client.post(f"/api/requests/approvals/{req['id']}/consent",
                     json={"agree": True, "rowVersion": req["rowVersion"]}, headers=org.staff2.headers)
     assert r.status_code == 200, r.text

@@ -41,7 +41,7 @@ BEGIN
     DECLARE @who BIGINT = (SELECT MIN(employee_id) FROM @to),
             @n_title NVARCHAR(200) = LEFT(N'Requisition ' + @code + N' approved: ' + ISNULL(@title, N''), 200),
             @n_body NVARCHAR(MAX) = ISNULL(@who_name, N'An employee') + N' needs it by ' + CONVERT(NVARCHAR(10), @needed, 23) + N'.',
-            @link NVARCHAR(500) = N'/requests/requisition/' + CONVERT(NVARCHAR(30), @request_id);
+            @link NVARCHAR(500) = [req].[fn_request_link](N'requisition', @request_id, N'all');
     WHILE @who IS NOT NULL
     BEGIN
         EXEC [core].[usp_notification_add_employee] @quiet = 1, @company_id = @company_id, @employee_id = @who,

@@ -190,7 +190,7 @@ BEGIN
             BEGIN
                 DECLARE @title NVARCHAR(200) = LEFT(N'Self review submitted: ' + @emp_name, 200),
                         @body NVARCHAR(MAX) = @emp_name + N' submitted the self review for ' + @cycle_name + N'. It is ready for your review.',
-                        @link NVARCHAR(500) = N'/performance/reviews/' + CONVERT(NVARCHAR(20), @id);
+                        @link NVARCHAR(500) = N'/performance/reviews?review=' + CONVERT(NVARCHAR(20), @id);
                 EXEC [perf].[usp_notify_employee] @company_id = @company_id, @employee_id = @reviewer, @title = @title,
                      @body = @body, @link = @link, @entity_type = N'perf.appraisal', @entity_id = @id;
             END
@@ -291,7 +291,7 @@ BEGIN
 
         DECLARE @title NVARCHAR(200) = LEFT(N'Your appraisal is final: ' + @cycle_name, 200),
                 @body NVARCHAR(MAX) = N'Final rating: ' + ISNULL(@label, N'-') + N' (' + ISNULL(CONVERT(NVARCHAR(20), @final), N'-') + N').',
-                @link NVARCHAR(500) = N'/performance/reviews/' + CONVERT(NVARCHAR(20), @id);
+                @link NVARCHAR(500) = N'/performance/reviews?review=' + CONVERT(NVARCHAR(20), @id);
         EXEC [perf].[usp_notify_employee] @company_id = @company_id, @employee_id = @emp, @title = @title, @body = @body,
              @link = @link, @entity_type = N'perf.appraisal', @entity_id = @id;
         INSERT [core].[audit_log] (company_id, entity_type, entity_id, field_name, old_value, new_value, action_name, performed_by_user_id, performed_at)

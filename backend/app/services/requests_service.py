@@ -126,6 +126,11 @@ def list_approvals(db: Db, ctx: RequestContext, filters: dict[str, Any], page: i
     return requests_repo.list_approvals(db, ctx.company_id, ctx.user_id, filters, page, page_size)
 
 
+def approval_summary(db: Db, ctx: RequestContext) -> list[dict[str, Any]]:
+    """The request types the caller has approvals of, through the flow or a delegation (ACC-13)."""
+    return requests_repo.approval_summary(db, ctx.company_id, ctx.user_id)
+
+
 def decide(db: Db, ctx: RequestContext, request_id: int, action: str, remarks: str | None,
            details: dict[str, Any] | None, row_version: bytes):
     requests_repo.decide(db, ctx.company_id, ctx.user_id, request_id, action, remarks,

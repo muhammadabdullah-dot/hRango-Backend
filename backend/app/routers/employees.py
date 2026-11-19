@@ -91,9 +91,12 @@ def lookup(permission: str = "employees.directory.view", q: str | None = None,
 @router.get("/update-requests", response_model=Paginated[UpdateRequestOut])
 def list_update_requests(employee_id: int | None = Query(None, alias="employeeId"),
                          status_: Literal["pending", "approved", "rejected", "cancelled"] | None = Query(None, alias="status"),
+                         q: str | None = None,
                          paging: PageParams = Depends(page_params), db: Db = Depends(get_db),
                          ctx: RequestContext = Depends(require("employees.update_requests.view"))) -> dict:
-    return c.list_update_requests(db, ctx, employee_id, status_, paging)
+    """Talent Management -> Update Requests (HR), and the employee's own (My Profile, with Cancel). `q` matches
+    the employee's code or name."""
+    return c.list_update_requests(db, ctx, employee_id, status_, paging, q)
 
 
 @router.get("/update-requests/{request_id}", response_model=Item[UpdateRequestOut])

@@ -196,7 +196,7 @@ BEGIN
             WHILE @aid IS NOT NULL
             BEGIN
                 SELECT @emp = employee_id FROM @added WHERE id = @aid;
-                SET @link = N'/performance/reviews/' + CONVERT(NVARCHAR(20), @aid);
+                SET @link = N'/performance/reviews?review=' + CONVERT(NVARCHAR(20), @aid);
                 EXEC [perf].[usp_notify_employee] @company_id = @company_id, @employee_id = @emp, @title = @title,
                      @link = @link, @entity_type = N'perf.appraisal', @entity_id = @aid;
                 SET @aid = (SELECT MIN(id) FROM @added WHERE id > @aid);
@@ -250,7 +250,7 @@ BEGIN
         WHILE @aid IS NOT NULL
         BEGIN
             SELECT @emp = employee_id FROM [perf].[appraisal] WHERE id = @aid;
-            SET @link = N'/performance/reviews/' + CONVERT(NVARCHAR(20), @aid);
+            SET @link = N'/performance/reviews?review=' + CONVERT(NVARCHAR(20), @aid);
             EXEC [perf].[usp_notify_employee] @company_id = @company_id, @employee_id = @emp, @title = @title,
                  @link = @link, @entity_type = N'perf.appraisal', @entity_id = @aid;
             SET @aid = (SELECT MIN(id) FROM [perf].[appraisal] WHERE appraisal_cycle_id = @id AND id > @aid);

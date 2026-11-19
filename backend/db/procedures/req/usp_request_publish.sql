@@ -36,7 +36,6 @@ BEGIN
         RETURN;
 
     DECLARE @actor_employee_id BIGINT = (SELECT employee_id FROM [auth].[user_account] WHERE id = @actor_user_id);
-    DECLARE @slug NVARCHAR(40) = REPLACE(@type_code, N'_', N'-');
 
     -- 1. The event.
     DECLARE @payload NVARCHAR(MAX) = (
@@ -69,9 +68,11 @@ BEGIN
     EXEC [core].[usp_event_publish] @company_id = @company_id, @event_type = @event_type,
          @entity_type = N'req.request', @entity_id = @request_id, @payload = @payload;
 
-    -- 2. Whoever must act now.
+    -- 2. Whoever must act now. The links open the request on its type's page in the web app
+    --    (req.fn_request_link): the Approvals tab for an approver (its Consents or Cancellations list
+    --    for such a step), the Requests tab for the requester.
     DECLARE @to TABLE (employee_id BIGINT NULL, user_id BIGINT NULL);
-    DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500) = N'/requests/approvals/' + CONVERT(NVARCHAR(30), @request_id),
+    DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500),
             @sid BIGINT, @appr BIGINT, @role BIGINT, @consent BIT, @purpose NVARCHAR(30), @who BIGINT;
 
     SET @sid = (SELECT MIN(id) FROM [req].[request_step]
@@ -87,6 +88,9 @@ BEGIN
                                  ELSE N' is waiting for your approval' END, 200);
         SET @body = ISNULL(@employee_name, N'An employee') + CASE WHEN @purpose = N'cancellation'
                         THEN N' asks to cancel an approved ' ELSE N' sent a ' END + LOWER(@type_name) + N' request.';
+        SET @link = [req].[fn_request_link](@type_code, @request_id,
+                        CASE WHEN @consent = 1 THEN N'consents' WHEN @purpose = N'cancellation' THEN N'cancellations'
+                             ELSE N'approvals' END);
 
         DELETE @to;
         IF @appr IS NOT NULL
@@ -135,7 +139,7 @@ BEGIN
                          WHEN N'requests.rejected' THEN N' was rejected'
                          WHEN N'requests.cancelled' THEN N' was cancelled'
                          ELSE N': the cancellation was rejected' END, 200);
-        SET @link = N'/requests/' + @slug + N'/' + CONVERT(NVARCHAR(30), @request_id);
+        SET @link = [req].[fn_request_link](@type_code, @request_id, N'requests');
         EXEC [core].[usp_notification_add_employee] @quiet = 1, @company_id = @company_id, @employee_id = @employee_id,
              @title = @title, @body = @remarks, @notification_type = N'request_update',
              @link = @link, @entity_type = N'req.request', @entity_id = @request_id;

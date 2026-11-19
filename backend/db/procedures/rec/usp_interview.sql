@@ -11,7 +11,7 @@ CREATE OR ALTER PROCEDURE [rec].[usp_interview_notify]
 AS
 BEGIN
     SET NOCOUNT ON;
-    DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500) = CONCAT(N'/recruitment/interviews/', @id);
+    DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500) = CONCAT(N'/recruitment/interviews?view=', @id);
     SELECT @title = LEFT(CONCAT(@heading, N': ', p.first_name, N' ', p.last_name), 200),
            @body = CONCAT(i.title, N' (round ', i.round_no, N') for ', o.title, N' on ',
                           FORMAT(i.scheduled_at, N'dd MMM yyyy, hh:mm tt'), N', ', i.duration_minutes, N' minutes',

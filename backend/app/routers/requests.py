@@ -14,7 +14,7 @@ from app.core.db import Db, get_db
 from app.core.paging import PageParams, page_params
 from app.middlewares.auth import RequestContext, get_context, require
 from app.schemas.common import Item, Paginated
-from app.schemas.requests import (TYPE_DETAILS, AttachmentIn, AttachmentOut, AuthorityIn, AuthorityOut,
+from app.schemas.requests import (TYPE_DETAILS, ApprovalSummaryOut, AttachmentIn, AttachmentOut, AuthorityIn, AuthorityOut,
                                   BulkDecisionIn, BulkResultOut, CancelIn, ColleagueOptionOut, ConsentIn, DecisionIn,
                                   DelegationIn, DelegationOut, DelegationPatch, ExpenseCategoryIn, ExpenseCategoryOut,
                                   FlowDetailOut, FlowIn, FlowOut, ForwardIn, GenerateApplicationIn,
@@ -119,6 +119,15 @@ def colleague_options(q: str | None = None, employee_id: int | None = Query(None
 def list_approvals(filters: dict = Depends(approval_filters), paging: PageParams = Depends(page_params),
                    db: Db = Depends(get_db), ctx: RequestContext = Depends(require("requests.approvals.view"))) -> dict:
     return c.list_approvals(db, ctx, filters, paging)
+
+
+@router.get("/approvals/summary", response_model=Item[list[ApprovalSummaryOut]])
+def approval_summary(db: Db = Depends(get_db),
+                     ctx: RequestContext = Depends(require("requests.approvals.view"))) -> dict:
+    """The request types the caller has approvals of (total, and waiting for them now), through the flow or
+    a delegation, whatever their permissions for the types themselves: the web app shows those types'
+    Approvals to a flow's approver (a Department Head named on a promotion) from the menu and the inbox."""
+    return c.approval_summary(db, ctx)
 
 
 @router.post("/approvals/bulk-approve", response_model=Item[list[BulkResultOut]])

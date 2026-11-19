@@ -318,7 +318,7 @@ BEGIN
 
         IF @action = N'accept' AND @hm IS NOT NULL
         BEGIN
-            DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500) = CONCAT(N'/recruitment/offers/', @id);
+            DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500) = CONCAT(N'/recruitment/offers?view=', @id);
             SELECT @title = LEFT(CONCAT(N'Offer accepted: ', p.first_name, N' ', p.last_name), 200),
                    @body = CONCAT(p.first_name, N' ', p.last_name, N' accepted the offer for ', o.title,
                                   N' and can join on ', CONVERT(NVARCHAR(10), x.joining_date, 23), N'.')

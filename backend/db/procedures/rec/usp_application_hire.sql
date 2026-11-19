@@ -159,7 +159,7 @@ BEGIN
 
         IF @hiring_manager IS NOT NULL
         BEGIN
-            DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500) = CONCAT(N'/recruitment/applications/', @id);
+            DECLARE @title NVARCHAR(200), @body NVARCHAR(MAX), @link NVARCHAR(500) = CONCAT(N'/recruitment/applications?view=', @id);
             SELECT @title = LEFT(CONCAT(N'Hired: ', p.first_name, N' ', p.last_name), 200),
                    @body = CONCAT(p.first_name, N' ', p.last_name, N' joins as ', o.title, N' on ',
                                   CONVERT(NVARCHAR(10), @joining_date, 23), N' (', e.code, N').')

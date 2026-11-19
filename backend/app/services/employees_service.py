@@ -229,8 +229,9 @@ def document_expiry_notify(db: Db, company_id: int, days_ahead: int = 30) -> int
 # ---------------------------------------------------------------- Update Information requests
 
 def list_update_requests(db: Db, ctx: RequestContext, employee_id: int | None, status: str | None, page: int,
-                         page_size: int):
-    return employees_repo.list_update_requests(db, ctx.company_id, ctx.user_id, employee_id, status, page, page_size)
+                         page_size: int, search: str | None = None):
+    return employees_repo.list_update_requests(db, ctx.company_id, ctx.user_id, employee_id, status, page, page_size,
+                                               search)
 
 
 def get_update_request(db: Db, ctx: RequestContext, request_id: int) -> dict[str, Any]:

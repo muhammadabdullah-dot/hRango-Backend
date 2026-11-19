@@ -15,7 +15,7 @@ from app.core.paging import PageParams
 from app.core.rowversion import row_version_in, row_version_out
 from app.middlewares.auth import RequestContext
 from app.schemas.common import paginated
-from app.schemas.requests import (AttachmentIn, AttachmentOut, AuthorityIn, AuthorityOut, BulkDecisionIn,
+from app.schemas.requests import (ApprovalSummaryOut, AttachmentIn, AttachmentOut, AuthorityIn, AuthorityOut, BulkDecisionIn,
                                   BulkResultOut, CancelIn, ColleagueOptionOut, ConsentIn, DecisionIn, DelegationIn,
                                   DelegationOut, DelegationPatch, ExpenseCategoryIn, ExpenseCategoryOut, FlowDetailOut,
                                   FlowIn, FlowNodeOut, FlowOut, ForwardIn, GenerateApplicationIn,
@@ -178,6 +178,10 @@ def request_types(db: Db) -> dict:
 def list_approvals(db: Db, ctx: RequestContext, filters: dict[str, Any], paging: PageParams) -> dict:
     total, rows, counts = svc.list_approvals(db, ctx, filters, paging.page, paging.page_size)
     return _page_with_counts(ctx, total, rows, counts, paging)
+
+
+def approval_summary(db: Db, ctx: RequestContext) -> dict:
+    return {"data": [ApprovalSummaryOut(**_pick(ApprovalSummaryOut, r)) for r in svc.approval_summary(db, ctx)]}
 
 
 def get_approval(db: Db, ctx: RequestContext, request_id: int) -> dict:

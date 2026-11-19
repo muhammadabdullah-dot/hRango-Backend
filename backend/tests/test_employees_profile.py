@@ -334,8 +334,11 @@ def test_update_information_requests(client, db, company, admin):
     assert asked.status_code == 201, asked.text
     req = asked.json()["data"]
     assert req["status"] == "pending" and req["employeeId"] == str(emp)
-    assert req["changes"] == {"maritalStatus": "married", "homeAddress": "Flat 3, Gulberg", "homeCityId": str(city)}
-    assert req["previous"] == {"maritalStatus": None, "homeAddress": None, "homeCityId": None}
+    # A city comes with its name too (HR's Update Requests list shows names).
+    city_name = fo.scalar(db, "SELECT name FROM org.city WHERE id = ?", city)
+    assert req["changes"] == {"maritalStatus": "married", "homeAddress": "Flat 3, Gulberg", "homeCityId": str(city),
+                              "homeCityName": city_name}
+    assert req["previous"] == {"maritalStatus": None, "homeAddress": None, "homeCityId": None, "homeCityName": None}
     assert any("asked to update their details" in t for t in fo.notification_titles(db, hr["user_id"]))
     assert fo.events(db, company, "employees.update_requested", int(req["id"]))[0]["employeeId"] == str(emp)
     again = client.post(f"/api/employees/{emp}/update-requests", headers=sh, json={"changes": {"phone1": "0300"}})

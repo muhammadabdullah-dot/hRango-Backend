@@ -1,6 +1,9 @@
 -- Request headers with what every list and the View popup show: the employee card (code, name,
--- job title, branch, department, location, joining date), the next approver ("Next Requestee")
--- and the final authority ("Approving Authority"). Deleted requests are left out.
+-- job title, branch, department, location, joining date), the next approver ("Next Requestee"),
+-- the final authority (the employee's, or the one a transfer names: not necessarily anyone who acts
+-- on the request) and who made the last decision (decided_by: the person who approved or rejected
+-- the latest step, a delegate for the approver included; the lists' "Approver" once nothing waits).
+-- Deleted requests are left out.
 CREATE OR ALTER FUNCTION [req].[fn_request_rows] (@company_id BIGINT)
 RETURNS TABLE
 AS RETURN
@@ -16,6 +19,7 @@ SELECT r.id, r.code, r.request_type_id, t.code AS request_type, t.name AS reques
        COALESCE(NULLIF(CONCAT(na.first_name, N' ', na.last_name), N' '), nr.name) AS next_approver_name,
        ns.approver_kind AS next_approver_kind,
        fa.id AS final_authority_id, NULLIF(CONCAT(fa.first_name, N' ', fa.last_name), N' ') AS final_authority_name,
+       ld.acted_by_id AS decided_by_id, NULLIF(CONCAT(dcd.first_name, N' ', dcd.last_name), N' ') AS decided_by_name,
        r.created_at, r.updated_at, r.row_version
 FROM [req].[request] r
 JOIN [req].[request_type] t ON t.id = r.request_type_id
@@ -30,4 +34,9 @@ LEFT JOIN [hr].[employee] na ON na.id = ns.approver_id
 LEFT JOIN [auth].[role] nr ON nr.id = ns.approver_role_id
 LEFT JOIN [req].[req_transfer] tr ON tr.request_id = r.id
 LEFT JOIN [hr].[employee] fa ON fa.id = COALESCE(tr.final_authority_id, e.final_authority_id)
+OUTER APPLY (SELECT TOP (1) s.acted_by_id
+             FROM [req].[request_step] s
+             WHERE s.request_id = r.id AND s.action_taken IN (N'approved', N'rejected') AND s.acted_by_id IS NOT NULL
+             ORDER BY s.acted_at DESC, s.id DESC) ld
+LEFT JOIN [hr].[employee] dcd ON dcd.id = ld.acted_by_id
 WHERE r.company_id = @company_id AND r.is_deleted = 0;

@@ -94,6 +94,10 @@ def list_approvals(db: Db, company_id: int, actor_user_id: int, f: dict[str, Any
     return total[0]["total"], rows, counts
 
 
+def approval_summary(db: Db, company_id: int, actor_user_id: int) -> list[dict[str, Any]]:
+    return db.call("req.usp_request_approval_summary", company_id=company_id, actor_user_id=actor_user_id)
+
+
 def add_attachment(db: Db, company_id: int, actor_user_id: int, request_id: int, type_code: str,
                    permission_code: str, file_id: int, label: str | None) -> dict[str, Any]:
     return db.call_sets("req.usp_request_attachment_add", company_id=company_id, actor_user_id=actor_user_id,

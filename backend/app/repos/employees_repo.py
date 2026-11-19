@@ -198,10 +198,10 @@ def document_expiry_notify(db: Db, company_id: int, days_ahead: int) -> int:
 # ---------------------------------------------------------------- Update Information requests
 
 def list_update_requests(db: Db, company_id: int, actor_user_id: int, employee_id: int | None, status: str | None,
-                         page: int, page_size: int) -> tuple[int, list[dict[str, Any]]]:
+                         page: int, page_size: int, search: str | None = None) -> tuple[int, list[dict[str, Any]]]:
     total, rows = db.call_sets("hr.usp_employee_change_request_list", company_id=company_id,
                                actor_user_id=actor_user_id, employee_id=employee_id, status=status, page=page,
-                               page_size=page_size)
+                               page_size=page_size, search=search)
     return total[0]["total"], rows
 
 
