@@ -11,10 +11,15 @@ def workforce(db: Db, company_id: int, actor_user_id: int, permission_code: str,
                         permission_code=permission_code, month=month)
 
 
+# The day's time sheet rows a dashboard lists ("Who's in today"). The counts cover every row; a company with
+# more people than this shows the first ones and links to the time sheet for the rest.
+ATTENDANCE_ROWS = 1000
+
+
 def attendance(db: Db, company_id: int, actor_user_id: int, permission_code: str, day: date | None,
                only_employee: int | None) -> list[list[dict[str, Any]]]:
     return db.call_sets("hr.usp_dashboard_attendance", company_id=company_id, actor_user_id=actor_user_id,
-                        permission_code=permission_code, day=day, rows=10, only_employee=only_employee)
+                        permission_code=permission_code, day=day, rows=ATTENDANCE_ROWS, only_employee=only_employee)
 
 
 def leave_applications(db: Db, company_id: int, actor_user_id: int, permission_code: str,

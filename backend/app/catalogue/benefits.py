@@ -15,6 +15,6 @@ SCREENS: list[tuple[str, str, tuple[str, ...], bool]] = [
 
 # Events this module publishes (core.usp_event_publish); webhooks subscribe to them.
 EVENTS: list[tuple[str, str]] = [
-    ("benefits.election_decided", "An employee's benefit election was approved or rejected (with the plans chosen); "
-     "the employee is notified."),
+    ("benefits.election_decided", "An employee's benefit election was approved or rejected (with the plans chosen, "
+     "the employee's note in data.remarks and HR's in data.decisionRemarks); the employee is notified."),
 ]

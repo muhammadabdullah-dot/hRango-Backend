@@ -56,7 +56,8 @@ election                              an employee's elections for a plan year ("
   submitted_at
   decided_by_user_id FK user_account
   decided_at
-  remarks
+  remarks                             the employee's note to HR
+  decision_remarks {NVARCHAR(MAX)} {NULL}  HR's remarks on the decision; required to reject (0041)
   UNIQUE (employee_id, plan_year_id)
 
 election_plan      election_id FK election, benefit_plan_id FK benefit_plan     

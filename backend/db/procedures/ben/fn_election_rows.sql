@@ -10,7 +10,7 @@ SELECT e.id, e.employee_id, em.code AS employee_code, NULLIF(CONCAT(em.first_nam
         WHERE ep.election_id = e.id) AS plan_ids,
        (SELECT STRING_AGG(b.name, N', ') WITHIN GROUP (ORDER BY b.name) FROM [ben].[election_plan] ep
         JOIN [ben].[benefit_plan] b ON b.id = ep.benefit_plan_id WHERE ep.election_id = e.id) AS plan_names,
-       e.submitted_at, e.decided_by_user_id, db.name AS decided_by_name, e.decided_at, e.remarks,
+       e.submitted_at, e.decided_by_user_id, db.name AS decided_by_name, e.decided_at, e.remarks, e.decision_remarks,
        e.created_at, e.updated_at, e.row_version
 FROM [ben].[election] e
 JOIN [hr].[employee] em ON em.id = e.employee_id

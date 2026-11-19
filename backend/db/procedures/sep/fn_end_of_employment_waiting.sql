@@ -2,7 +2,8 @@
 --   final_settlement   Final Settlement ticked and the settlement is not closed (payroll closes it)
 --   asset_clearance    Asset Clearance ticked and no approved clearance form for this record
 --   assets             Asset Clearance ticked and the employee still holds assets
---   checklist          a required field of an active off-boarding checklist has no answer
+--   checklist          a required field of an active off-boarding checklist has no answer (a required tick box,
+--                      field type boolean, must be ticked: "false" is how an unticked box is saved)
 --   last_working_date  the last working date has not been reached
 -- Empty for a completed record.
 CREATE OR ALTER FUNCTION [sep].[fn_end_of_employment_waiting] (@id BIGINT)
@@ -31,7 +32,8 @@ CROSS APPLY (
         WHERE k.company_id = x.company_id AND k.is_active = 1 AND f.is_required = 1
           AND NOT EXISTS (SELECT 1 FROM [sep].[checklist_answer] a
                           WHERE a.end_of_employment_id = x.id AND a.checklist_field_id = f.id
-                            AND NULLIF(LTRIM(RTRIM(a.answer)), N'') IS NOT NULL))
+                            AND NULLIF(LTRIM(RTRIM(a.answer)), N'') IS NOT NULL
+                            AND (f.field_type <> N'boolean' OR LOWER(LTRIM(RTRIM(a.answer))) = N'true')))
     UNION ALL
     SELECT N'last_working_date', N'Last working date not reached', 5
     WHERE x.last_working_date > CAST(SYSDATETIME() AS DATE)

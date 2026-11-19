@@ -182,7 +182,8 @@ BEGIN
             UPDATE [ben].[election]
             SET enrollment_window_id = @enrollment_window_id, status = @status,
                 submitted_at = CASE WHEN @status IN (N'pending', N'waived') THEN @now END,
-                decided_by_user_id = NULL, decided_at = NULL, remarks = @remarks, updated_at = @now, updated_by = @actor_user_id
+                decided_by_user_id = NULL, decided_at = NULL, decision_remarks = NULL, remarks = @remarks,
+                updated_at = @now, updated_by = @actor_user_id
             WHERE id = @id AND row_version = @row_version;
             IF @@ROWCOUNT = 0
                 THROW 50409, N'Someone else changed this election. Reload it and try again', 1;
@@ -201,8 +202,9 @@ BEGIN
 END
 GO
 
--- Approve or reject a pending election (@decision approve / reject). Publishes benefits.election_decided and
--- tells the employee.
+-- Approve or reject a pending election (@decision approve / reject). @remarks are HR's (decision_remarks; the
+-- employee's own note stays in remarks) and are required to reject: the employee is told why. Publishes
+-- benefits.election_decided and tells the employee.
 CREATE OR ALTER PROCEDURE [ben].[usp_election_decide]
     @company_id      BIGINT,
     @actor_user_id   BIGINT,
@@ -218,6 +220,7 @@ BEGIN
 
     IF @decision NOT IN (N'approve', N'reject')
         THROW 50400, N'decision|Decision is approve or reject.', 1;
+    SET @remarks = NULLIF(LTRIM(RTRIM(@remarks)), N'');
 
     DECLARE @rv BINARY(8), @status NVARCHAR(30), @now DATETIME2(0) = SYSUTCDATETIME();
     SELECT @rv = e.row_version, @status = e.status
@@ -232,12 +235,14 @@ BEGIN
         THROW 50409, N'Someone else changed this election. Reload it and try again', 1;
     IF @status <> N'pending'
         THROW 50409, N'status|ELECTION_DECIDED|Only a pending election can be approved or rejected.', 1;
+    IF @decision = N'reject' AND @remarks IS NULL
+        THROW 50400, N'remarks|Give the reason for the rejection; the employee is told it.', 1;
 
     BEGIN TRAN;
         UPDATE [ben].[election]
         SET status = CASE @decision WHEN N'approve' THEN N'approved' ELSE N'rejected' END,
             decided_by_user_id = @actor_user_id, decided_at = @now,
-            remarks = COALESCE(NULLIF(LTRIM(RTRIM(@remarks)), N''), remarks), updated_at = @now, updated_by = @actor_user_id
+            decision_remarks = @remarks, updated_at = @now, updated_by = @actor_user_id
         WHERE id = @id AND row_version = @row_version;
         IF @@ROWCOUNT = 0
             THROW 50409, N'Someone else changed this election. Reload it and try again', 1;
@@ -249,7 +254,8 @@ BEGIN
         SELECT @employee_id = e.employee_id, @year = py.name,
                @payload = (SELECT CONVERT(NVARCHAR(30), e.id) AS electionId, CONVERT(NVARCHAR(30), e.employee_id) AS employeeId,
                                   CONVERT(NVARCHAR(30), e.plan_year_id) AS planYearId, py.name AS planYearName, e.status,
-                                  e.remarks, CONVERT(NVARCHAR(30), @actor_user_id) AS decidedBy,
+                                  e.remarks, e.decision_remarks AS decisionRemarks,
+                                  CONVERT(NVARCHAR(30), @actor_user_id) AS decidedBy,
                                   (SELECT CONVERT(NVARCHAR(30), b.id) AS id, b.name, b.category
                                    FROM [ben].[election_plan] ep JOIN [ben].[benefit_plan] b ON b.id = ep.benefit_plan_id
                                    WHERE ep.election_id = e.id ORDER BY b.name FOR JSON PATH) AS plans
@@ -261,7 +267,7 @@ BEGIN
 
         DECLARE @title NVARCHAR(200) = LEFT(CONCAT(N'Your benefit choices for ', @year, N' were ',
                                                    CASE @decision WHEN N'approve' THEN N'approved' ELSE N'rejected' END), 200);
-        DECLARE @body NVARCHAR(MAX) = NULLIF(LTRIM(RTRIM(@remarks)), N'');
+        DECLARE @body NVARCHAR(MAX) = @remarks;
         EXEC [core].[usp_notification_add_employee] @quiet = 1, @company_id = @company_id, @employee_id = @employee_id,
              @title = @title, @body = @body, @notification_type = N'benefits', @link = N'/benefits/employees',
              @entity_type = N'ben.election', @entity_id = @id;

@@ -286,6 +286,10 @@ class BudgetOut(ApiModel):
     created_by_name: str | None
     updated_at: datetime | None
     row_version: str
+    can_approve: bool = False
+    """The caller may approve this pending budget (manpower.budget_approvals.approve reaches its department)."""
+    can_reject: bool = False
+    """The caller may reject this pending budget."""
 
 
 class PlanFileOut(ApiModel):

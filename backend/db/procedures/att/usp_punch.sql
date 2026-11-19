@@ -144,17 +144,25 @@ BEGIN
         THROW 50400, N'breakTypeId|A break type goes with a break out or break in punch.', 1;
     IF @break_type_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM [sch].[break_type] WHERE id = @break_type_id AND company_id = @company_id)
         THROW 50400, N'breakTypeId|Break type not found.', 1;
-    IF EXISTS (SELECT 1 FROM [att].[punch] WHERE employee_id = @employee_id AND punched_at = @punched_at
-               AND punch_type = @punch_type AND (@id IS NULL OR id <> @id))
-        THROW 50409, N'punchedAt|PUNCH_DUPLICATE|This employee already has this punch at this time.', 1;
 
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     DECLARE @old_at DATETIME2(0), @old_type NVARCHAR(30), @old_emp BIGINT, @old_break BIGINT, @old_remarks NVARCHAR(MAX),
-            @old_source NVARCHAR(30), @old_rv BINARY(8);
+            @old_source NVARCHAR(30), @old_rv BINARY(8), @lock INT;
+    DECLARE @resource NVARCHAR(255) = CONCAT(N'att.punch.', @employee_id);
 
     IF @id IS NULL
     BEGIN
         BEGIN TRAN;
+            -- The same punch twice is refused (PUNCH_DUPLICATE): a second press of Create after a slow answer
+            -- finds the first one. The lock on the person's punches makes the check and the insert one step, so
+            -- two presses at once cannot both insert.
+            EXEC @lock = sp_getapplock @Resource = @resource, @LockMode = N'Exclusive', @LockOwner = N'Transaction',
+                                       @LockTimeout = 60000;
+            IF @lock < 0
+                THROW 50409, N'punchedAt|PUNCH_BUSY|Another punch of this employee is being saved. Wait a moment and reload.', 1;
+            IF EXISTS (SELECT 1 FROM [att].[punch] WHERE employee_id = @employee_id AND punched_at = @punched_at
+                       AND punch_type = @punch_type)
+                THROW 50409, N'punchedAt|PUNCH_DUPLICATE|This employee already has this punch at this time. It is in the log: reload to see it.', 1;
             INSERT [att].[punch] (company_id, employee_id, punched_at, punch_type, break_type_id, source, remarks, created_by)
             VALUES (@company_id, @employee_id, @punched_at, @punch_type, @break_type_id, N'manual', @remarks, @actor_user_id);
             SET @id = SCOPE_IDENTITY();
@@ -184,6 +192,13 @@ BEGIN
             THROW 50400, N'employeeId|A punch cannot be moved to another employee.', 1;
 
         BEGIN TRAN;
+            EXEC @lock = sp_getapplock @Resource = @resource, @LockMode = N'Exclusive', @LockOwner = N'Transaction',
+                                       @LockTimeout = 60000;
+            IF @lock < 0
+                THROW 50409, N'punchedAt|PUNCH_BUSY|Another punch of this employee is being saved. Wait a moment and reload.', 1;
+            IF EXISTS (SELECT 1 FROM [att].[punch] WHERE employee_id = @employee_id AND punched_at = @punched_at
+                       AND punch_type = @punch_type AND id <> @id)
+                THROW 50409, N'punchedAt|PUNCH_DUPLICATE|This employee already has this punch at this time.', 1;
             UPDATE [att].[punch]
             SET punched_at = @punched_at, punch_type = @punch_type, break_type_id = @break_type_id, remarks = @remarks,
                 is_manually_updated = 1, updated_at = @now, updated_by = @actor_user_id

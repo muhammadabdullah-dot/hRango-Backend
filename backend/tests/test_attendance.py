@@ -283,7 +283,9 @@ def test_clock_in_and_out(client, db):
     assert r.json()["data"]["punchType"] == "check_in" and r.json()["data"]["source"] == "mobile"
     state = client.get("/api/attendance/clock", headers=staff).json()["data"]
     assert state["clockedIn"] is True and state["nextPunchType"] == "check_out"
-    assert client.post("/api/attendance/clock", json={"punchType": "check_in"}, headers=staff).status_code == 409
+    # Clock In again a moment later is the same press: the first punch comes back, no second one is made.
+    again = client.post("/api/attendance/clock", json={"punchType": "check_in"}, headers=staff)
+    assert again.status_code == 201 and again.json()["data"]["id"] == r.json()["data"]["id"]
 
     fence = client.post("/api/attendance/settings/geo-fences", json={
         "name": "Office", "shape": "circle", "centerLat": 24.86, "centerLng": 67.00, "radiusM": 300,

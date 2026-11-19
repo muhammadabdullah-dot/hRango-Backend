@@ -40,8 +40,12 @@ def _workforce(db: Db, ctx: RequestContext, code: str, month: date | None) -> di
 def _attendance(db: Db, ctx: RequestContext, code: str, day: date | None, only_employee: int | None) -> dict[str, Any]:
     totals, months, rows = dashboard_repo.attendance(db, ctx.company_id, ctx.user_id, code, day, only_employee)
     t = {k: v or 0 for k, v in totals[0].items()}
-    return {"day": day or date.today(), "present": t["present"], "absent": t["absent"], "on_leave": t["on_leave"],
+    # The day the figures are for: the one asked, or the company's today (the procedure works it out).
+    return {"day": totals[0]["day"] or day or date.today(), "present": t["present"], "absent": t["absent"],
+            "on_leave": t["on_leave"],
             "absenteeism_percent": _pct(t["absent"], t["present"] + t["absent"]),
+            "clocked_in": t["clocked_in"], "not_started": t["not_started"], "day_off": t["day_off"],
+            "row_count": t["row_count"],
             "by_month": months, "rows": [{**r, "status": r["day_status"]} for r in rows]}
 
 

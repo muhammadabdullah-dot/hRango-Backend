@@ -2,6 +2,10 @@
 -- department) or are added by hand. Approving one releases its open positions; the plan's status follows
 -- its budgets. Approval is status based here (not req.request): see comparison/09-manpower-benefits.md.
 -- Scope: a budget is reached through its department, or its plan's station (mp.fn_unit_reach).
+-- Reading a budget (manpower.e_budgeting.view, manpower.budget_approvals.view) and deciding it
+-- (manpower.budget_approvals.approve / reject) are scoped apart: Finance reads every department's budgets, a
+-- department head decides their own department's. can_approve / can_reject on every row say which pending
+-- budgets the caller may decide, so the screens offer only those.
 
 CREATE OR ALTER PROCEDURE [mp].[usp_e_budget_get]
     @company_id      BIGINT,
@@ -21,7 +25,16 @@ BEGIN
     IF @found = 0
         THROW 50404, N'Budget not found', 1;
 
-    SELECT * FROM [mp].[fn_budget_rows](@company_id) WHERE id = @id;
+    SELECT x.*,
+           CAST(CASE WHEN x.status = N'pending' AND EXISTS (
+               SELECT 1 FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, N'manpower.budget_approvals.approve') r
+               WHERE r.unit_type = N'company' OR (r.unit_type = N'department' AND r.unit_id = x.department_id)
+                  OR (r.unit_type = N'branch' AND r.unit_id = x.branch_id)) THEN 1 ELSE 0 END AS BIT) AS can_approve,
+           CAST(CASE WHEN x.status = N'pending' AND EXISTS (
+               SELECT 1 FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, N'manpower.budget_approvals.reject') r
+               WHERE r.unit_type = N'company' OR (r.unit_type = N'department' AND r.unit_id = x.department_id)
+                  OR (r.unit_type = N'branch' AND r.unit_id = x.branch_id)) THEN 1 ELSE 0 END AS BIT) AS can_reject
+    FROM [mp].[fn_budget_rows](@company_id) x WHERE x.id = @id;
 END
 GO
 
@@ -46,6 +59,11 @@ BEGIN
     DECLARE @reach TABLE (unit_type NVARCHAR(30), unit_id BIGINT);
     INSERT @reach SELECT unit_type, unit_id FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, @permission_code);
     DECLARE @all BIT = CASE WHEN EXISTS (SELECT 1 FROM @reach WHERE unit_type = N'company') THEN 1 ELSE 0 END;
+    -- Where the caller may decide (can_approve / can_reject), which can be narrower than where they read.
+    DECLARE @approve TABLE (unit_type NVARCHAR(30), unit_id BIGINT);
+    INSERT @approve SELECT unit_type, unit_id FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, N'manpower.budget_approvals.approve');
+    DECLARE @reject TABLE (unit_type NVARCHAR(30), unit_id BIGINT);
+    INSERT @reject SELECT unit_type, unit_id FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, N'manpower.budget_approvals.reject');
 
     SELECT COUNT(*) AS total
     FROM [mp].[fn_budget_rows](@company_id) x
@@ -58,7 +76,15 @@ BEGIN
       AND (@status IS NULL OR x.status = @status)
     OPTION (RECOMPILE);
 
-    SELECT x.*
+    SELECT x.*,
+           CAST(CASE WHEN x.status = N'pending' AND EXISTS (
+               SELECT 1 FROM @approve r
+               WHERE r.unit_type = N'company' OR (r.unit_type = N'department' AND r.unit_id = x.department_id)
+                  OR (r.unit_type = N'branch' AND r.unit_id = x.branch_id)) THEN 1 ELSE 0 END AS BIT) AS can_approve,
+           CAST(CASE WHEN x.status = N'pending' AND EXISTS (
+               SELECT 1 FROM @reject r
+               WHERE r.unit_type = N'company' OR (r.unit_type = N'department' AND r.unit_id = x.department_id)
+                  OR (r.unit_type = N'branch' AND r.unit_id = x.branch_id)) THEN 1 ELSE 0 END AS BIT) AS can_reject
     FROM [mp].[fn_budget_rows](@company_id) x
     WHERE (@all = 1 OR EXISTS (SELECT 1 FROM @reach r WHERE (r.unit_type = N'department' AND r.unit_id = x.department_id)
                                                         OR (r.unit_type = N'branch' AND r.unit_id = x.branch_id)))
@@ -237,12 +263,29 @@ BEGIN
         THROW 50400, N'decision|Decision is approve or reject.', 1;
 
     DECLARE @rv BINARY(8), @status NVARCHAR(30), @dept BIGINT, @plan_id BIGINT, @branch BIGINT, @now DATETIME2(0) = SYSUTCDATETIME();
-    SELECT @rv = b.row_version, @status = b.status, @dept = b.department_id, @plan_id = b.manpower_plan_id, @branch = p.branch_id
+    DECLARE @dept_name NVARCHAR(200), @msg NVARCHAR(2048);
+    SELECT @rv = b.row_version, @status = b.status, @dept = b.department_id, @plan_id = b.manpower_plan_id, @branch = p.branch_id,
+           @dept_name = dp.name
     FROM [mp].[e_budget] b LEFT JOIN [mp].[manpower_plan] p ON p.id = b.manpower_plan_id
+    LEFT JOIN [org].[department] dp ON dp.id = b.department_id
     WHERE b.id = @id AND b.company_id = @company_id;
-    IF @rv IS NULL OR NOT EXISTS (SELECT 1 FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, @permission_code) r
-                                  WHERE r.unit_type = N'company' OR (r.unit_type = N'department' AND r.unit_id = @dept)
-                                     OR (r.unit_type = N'branch' AND r.unit_id = @branch))
+    IF @rv IS NOT NULL AND NOT EXISTS (SELECT 1 FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, @permission_code) r
+                                       WHERE r.unit_type = N'company' OR (r.unit_type = N'department' AND r.unit_id = @dept)
+                                          OR (r.unit_type = N'branch' AND r.unit_id = @branch))
+    BEGIN
+        -- A budget the caller reads (Finance reads every department's) but may not decide: say why, not "not found".
+        IF EXISTS (SELECT 1 FROM [mp].[fn_unit_reach](@company_id, @actor_user_id, N'manpower.budget_approvals.view') r
+                   WHERE r.unit_type = N'company' OR (r.unit_type = N'department' AND r.unit_id = @dept)
+                      OR (r.unit_type = N'branch' AND r.unit_id = @branch))
+        BEGIN
+            SET @msg = CONCAT(N'This budget is for ', ISNULL(@dept_name, N'no department'),
+                              N'. Only someone who decides that department''s budgets (its head) can ',
+                              @decision, N' it.');
+            THROW 50403, @msg, 1;
+        END
+        SET @rv = NULL;
+    END
+    IF @rv IS NULL
         THROW 50404, N'Budget not found', 1;
     IF @row_version IS NULL
         THROW 50400, N'rowVersion|rowVersion is required.', 1;

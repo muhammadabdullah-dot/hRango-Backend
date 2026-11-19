@@ -166,12 +166,16 @@ class ElectionOut(ApiModel):
     decided_by_name: str | None
     decided_at: datetime | None
     remarks: str | None
+    """The employee's note to HR."""
+    decision_remarks: str | None
+    """HR's remarks on the approval or rejection (always given for a rejection)."""
     created_at: datetime
     updated_at: datetime | None
     row_version: str
 
 
 class DecisionIn(ApiModel):
+    """HR's remarks, told to the employee. Required to reject (422 on remarks without them)."""
     remarks: str | None = Field(None, max_length=2000)
     row_version: str
 

@@ -479,8 +479,9 @@ END
 GO
 
 -- Switches an employee off (@active = 0: status inactive, their sign-in accounts switched off and
--- signed out) or back on (@active = 1: status active; accounts stay off until an administrator
--- switches them on). Leaving the company is the separation module's job, not this.
+-- signed out) or back on (@active = 1: the status they had before, kept in status_before_inactive, so
+-- someone on probation or notice comes back on probation or notice; accounts stay off until an
+-- administrator switches them on). Leaving the company is the separation module's job, not this.
 CREATE OR ALTER PROCEDURE [hr].[usp_employee_active_set]
     @company_id    BIGINT,
     @actor_user_id BIGINT,
@@ -492,8 +493,8 @@ BEGIN
     SET NOCOUNT ON;
     SET XACT_ABORT ON;
 
-    DECLARE @old_rv BINARY(8), @old_status NVARCHAR(30);
-    SELECT @old_rv = e.row_version, @old_status = e.status
+    DECLARE @old_rv BINARY(8), @old_status NVARCHAR(30), @before NVARCHAR(30);
+    SELECT @old_rv = e.row_version, @old_status = e.status, @before = e.status_before_inactive
     FROM [hr].[employee] e
     JOIN [auth].[fn_visible_employees](@company_id, @actor_user_id, N'employees.directory.delete') v ON v.employee_id = e.id
     WHERE e.id = @id AND e.company_id = @company_id;
@@ -512,10 +513,22 @@ BEGIN
     IF @active = 1
         EXEC [plat].[usp_plan_employee_check] @company_id = @company_id, @adding = 1;
 
-    DECLARE @new NVARCHAR(30) = CASE WHEN @active = 1 THEN N'active' ELSE N'inactive' END;
+    -- Back on: the status kept at the switch-off. Without one (an old record), probation while the probation of
+    -- the current employment has not ended and nobody confirmed them, else active.
+    IF @active = 1 AND (@before IS NULL OR @before NOT IN (N'active', N'probation', N'notice'))
+        SELECT @before = CASE WHEN p.probation_end_date >= CAST([att].[fn_company_now](@company_id) AS DATE)
+                                   AND p.confirmation_date IS NULL
+                              THEN N'probation' ELSE N'active' END
+        FROM (SELECT 1 AS one) o
+        OUTER APPLY (SELECT TOP 1 x.probation_end_date, x.confirmation_date FROM [hr].[employment_period] x
+                     WHERE x.employee_id = @id ORDER BY x.joining_date DESC, x.id DESC) p;
+
+    DECLARE @new NVARCHAR(30) = CASE WHEN @active = 1 THEN @before ELSE N'inactive' END;
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME();
     BEGIN TRAN;
-        UPDATE [hr].[employee] SET status = @new, updated_at = @now, updated_by = @actor_user_id
+        UPDATE [hr].[employee]
+        SET status = @new, status_before_inactive = CASE WHEN @active = 0 THEN @old_status END,
+            updated_at = @now, updated_by = @actor_user_id
         WHERE id = @id AND row_version = @row_version;
         IF @@ROWCOUNT = 0
             THROW 50409, N'Someone else changed this employee. Reload it and try again', 1;

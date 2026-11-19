@@ -186,8 +186,11 @@ BEGIN
             SET @action = N'staff_changed';
         END
         DECLARE @ref NVARCHAR(100) = CONVERT(NVARCHAR(30), @id);
+        -- Detail: who was added or changed, with their role (and when switched off).
+        DECLARE @audit_detail NVARCHAR(1000) = LEFT(CONCAT(@display_name, N' · ', @role,
+                                                           CASE WHEN @is_active = 0 THEN N' · switched off' END), 1000);
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action, @entity_type = N'staff_account',
-             @entity_ref = @ref, @detail = @role;
+             @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
 
     EXEC [plat].[usp_staff_get] @id = @id;
@@ -206,13 +209,14 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM [plat].[staff_account] WHERE id = @id)
         THROW 50404, N'Staff member not found', 1;
     DECLARE @now DATETIME2(0) = SYSUTCDATETIME(), @ref NVARCHAR(100) = CONVERT(NVARCHAR(30), @id);
+    DECLARE @audit_detail NVARCHAR(1000) = (SELECT LEFT(display_name, 1000) FROM [plat].[staff_account] WHERE id = @id);
     BEGIN TRAN;
         UPDATE [plat].[staff_account] SET password_hash = @password_hash, updated_at = @now, updated_by = @actor_id
         WHERE id = @id;
         UPDATE [plat].[staff_session] SET revoked_at = @now, updated_at = @now
         WHERE staff_account_id = @id AND revoked_at IS NULL;
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = N'staff_password_set',
-             @entity_type = N'staff_account', @entity_ref = @ref;
+             @entity_type = N'staff_account', @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
 END
 GO

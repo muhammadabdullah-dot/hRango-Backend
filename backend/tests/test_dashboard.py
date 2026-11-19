@@ -1,5 +1,5 @@
 """CEO, HR and My dashboards: figures follow the dashboard permission's scope."""
-from datetime import date
+from datetime import date, datetime, time, timedelta
 
 from tests import factories
 from tests import factories_organisation as fo
@@ -69,3 +69,30 @@ def test_scope_narrows_dashboard(client, db):
     nobody = factories.login_as(db, client, company)["headers"]
     assert client.get("/api/dashboard/hr", headers=nobody).status_code == 403
     assert client.get("/api/dashboard/me", headers=nobody).status_code == 403
+
+
+def test_whos_in_counts_and_lists_everyone(client, db):
+    """15.52: "Who's in today" listed the ten latest arrivals and the card counted those; the counts now cover the
+    whole day and the rows come earliest first, all of them."""
+    company = factories.company(db)
+    h = factories.login_as(db, client, company, role_codes="company_admin")["headers"]
+    today = date.today()
+    start = datetime.combine(today, time(8, 30))
+    arrived = []
+    for i in range(12):
+        emp = _employee(db, company)
+        fo.execute(db, "INSERT att.timesheet_day (company_id, employee_id, work_date, day_status, first_in) "
+                       "VALUES (?, ?, ?, N'present', ?)", company, emp, today, start + timedelta(minutes=i))
+        arrived.append(emp)
+    late = _employee(db, company)
+    fo.timesheet_day(db, company, late, today, "yet_to_start")
+    off = _employee(db, company)
+    fo.timesheet_day(db, company, off, today, "weekend")
+
+    a = client.get("/api/dashboard/hr", headers=h).json()["data"]["attendance"]
+    assert a["present"] == 12 and a["clockedIn"] == 12
+    assert (a["notStarted"], a["dayOff"], a["rowCount"]) == (1, 1, 14)
+    assert len(a["rows"]) == 14
+    # Earliest arrival first (the ten latest used to be all there was), then those not in yet.
+    assert [r["employeeId"] for r in a["rows"][:12]] == [str(e) for e in arrived]
+    assert {r["employeeId"] for r in a["rows"][12:]} == {str(late), str(off)}

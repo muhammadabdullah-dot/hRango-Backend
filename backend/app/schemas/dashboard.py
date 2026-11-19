@@ -81,12 +81,18 @@ class AttendanceRow(ApiModel):
 
 
 class Attendance(ApiModel):
-    """From the time sheet: present (present, half day, short day, WFH, official visit), absent, on leave."""
+    """From the time sheet: present (present, half day, short day, WFH, official visit), absent, on leave.
+    clocked_in, not_started, day_off and row_count count every time sheet row of the day; rows lists them
+    earliest arrival first, up to the first 1000 (row_count says how many there are)."""
     day: date
     present: int
     absent: int
     on_leave: int
     absenteeism_percent: float
+    clocked_in: int
+    not_started: int
+    day_off: int
+    row_count: int
     by_month: list[MonthAttendance]
     rows: list[AttendanceRow]
 

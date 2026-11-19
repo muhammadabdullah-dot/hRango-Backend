@@ -3,21 +3,27 @@
 -- workforce figures so a change there touches only this file.
 
 -- Attendance for the employees the permission reaches.
---   1 totals for @day: present (present, half day, short day, WFH, official visit), absent, on leave
+--   1 the day (@day, or the company's today) and its totals: present (present, half day, short day, WFH,
+--     official visit), absent, on leave,
+--     clocked in (a first in), not started yet, day off (weekend, rest day, holiday, sandwich) and the
+--     number of time sheet rows; counted over every row, however many result set 3 returns
 --   2 per month of @day's year: present, absent and leave days
---   3 @day's time sheet rows (latest first, up to @rows): staff, first in, last out, status
+--   3 @day's time sheet rows (earliest arrival first, then those not in yet by name; up to @rows):
+--     staff, first in, last out, status
 CREATE OR ALTER PROCEDURE [hr].[usp_dashboard_attendance]
     @company_id      BIGINT,
     @actor_user_id   BIGINT,
     @permission_code NVARCHAR(150),
     @day             DATE = NULL,
-    @rows            INT = 10,
+    @rows            INT = 1000,
     @only_employee   BIGINT = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    SET @day = ISNULL(@day, CAST(SYSUTCDATETIME() AS DATE));
+    -- Today is the company's today (its time zone), as the time sheet and the clock have it, not UTC's: in
+    -- Pakistan UTC's date is still yesterday until 5 AM.
+    SET @day = ISNULL(@day, CAST([att].[fn_company_now](@company_id) AS DATE));
     DECLARE @year_start DATE = DATEFROMPARTS(YEAR(@day), 1, 1);
 
     DECLARE @e TABLE (id BIGINT PRIMARY KEY);
@@ -25,9 +31,14 @@ BEGIN
     SELECT v.employee_id FROM [auth].[fn_visible_employees](@company_id, @actor_user_id, @permission_code) v
     WHERE @only_employee IS NULL OR v.employee_id = @only_employee;
 
-    SELECT SUM(CASE WHEN t.day_status IN (N'present', N'half_day', N'short_day', N'wfh', N'official_visit') THEN 1 ELSE 0 END) AS present,
+    SELECT @day AS [day],
+           SUM(CASE WHEN t.day_status IN (N'present', N'half_day', N'short_day', N'wfh', N'official_visit') THEN 1 ELSE 0 END) AS present,
            SUM(CASE WHEN t.day_status = N'absent' THEN 1 ELSE 0 END) AS absent,
-           SUM(CASE WHEN t.day_status = N'leave' THEN 1 ELSE 0 END) AS on_leave
+           SUM(CASE WHEN t.day_status = N'leave' THEN 1 ELSE 0 END) AS on_leave,
+           SUM(CASE WHEN t.first_in IS NOT NULL THEN 1 ELSE 0 END) AS clocked_in,
+           SUM(CASE WHEN t.day_status = N'yet_to_start' THEN 1 ELSE 0 END) AS not_started,
+           SUM(CASE WHEN t.day_status IN (N'weekend', N'rest_day', N'holiday', N'sandwich') THEN 1 ELSE 0 END) AS day_off,
+           COUNT(*) AS row_count
     FROM [att].[timesheet_day] t JOIN @e e ON e.id = t.employee_id
     WHERE t.work_date = @day;
 
@@ -47,7 +58,7 @@ BEGIN
     JOIN [hr].[employee] x ON x.id = t.employee_id
     LEFT JOIN [org].[designation] ds ON ds.id = x.designation_id
     WHERE t.work_date = @day
-    ORDER BY t.first_in DESC, t.employee_id;
+    ORDER BY CASE WHEN t.first_in IS NULL THEN 1 ELSE 0 END, t.first_in, x.first_name, x.last_name, t.employee_id;
 END
 GO
 

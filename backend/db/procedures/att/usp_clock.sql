@@ -55,6 +55,10 @@ END
 GO
 
 -- Records the punch at the company's current time and re-processes the day. Returns the punch.
+-- A double press is safe: when the person's last punch is the same type and less than five minutes old (the
+-- first press went through while the screen waited, or was pressed twice), that punch is returned and no
+-- second one is made. The check and the insert hold a lock on the person's punches, so two presses at once
+-- cannot both insert.
 CREATE OR ALTER PROCEDURE [att].[usp_clock_punch]
     @company_id    BIGINT,
     @actor_user_id BIGINT,
@@ -81,19 +85,34 @@ BEGIN
     IF @photo_file_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM [core].[fn_file_usable](@company_id, @photo_file_id))
         THROW 50400, N'photoFileId|The photo was not found. Take it again.', 1;
 
-    DECLARE @now DATETIME2(0) = [att].[fn_company_now](@company_id), @id BIGINT;
-    IF EXISTS (SELECT 1 FROM [att].[punch] WHERE employee_id = @employee_id AND punch_type = @punch_type
-               AND punched_at > DATEADD(MINUTE, -1, @now))
-        THROW 50409, N'punchType|PUNCH_REPEATED|You punched a moment ago.', 1;
+    DECLARE @now DATETIME2(0) = [att].[fn_company_now](@company_id), @id BIGINT, @lock INT;
+    DECLARE @resource NVARCHAR(255) = CONCAT(N'att.punch.', @employee_id);
+    DECLARE @last_id BIGINT, @last_type NVARCHAR(30), @last_at DATETIME2(0), @repeat BIT = 0;
 
     BEGIN TRAN;
-        INSERT [att].[punch] (company_id, employee_id, punched_at, punch_type, source, latitude, longitude, ip_address,
-                              photo_file_id, created_by)
-        VALUES (@company_id, @employee_id, @now, @punch_type, @source, @latitude, @longitude, @ip_address,
-                @photo_file_id, @actor_user_id);
-        SET @id = SCOPE_IDENTITY();
+        EXEC @lock = sp_getapplock @Resource = @resource, @LockMode = N'Exclusive', @LockOwner = N'Transaction',
+                                   @LockTimeout = 60000;
+        IF @lock < 0
+            THROW 50409, N'punchType|PUNCH_BUSY|Another punch of yours is being recorded. Wait a moment and reload.', 1;
+
+        SELECT TOP 1 @last_id = p.id, @last_type = p.punch_type, @last_at = p.punched_at
+        FROM [att].[punch] p
+        WHERE p.employee_id = @employee_id AND p.is_ignored = 0 AND p.punched_at <= DATEADD(MINUTE, 5, @now)
+        ORDER BY p.punched_at DESC, p.id DESC;
+
+        IF @last_type = @punch_type AND @last_at > DATEADD(MINUTE, -5, @now)
+            SELECT @id = @last_id, @repeat = 1;  -- the same press again: keep the first punch
+        ELSE
+        BEGIN
+            INSERT [att].[punch] (company_id, employee_id, punched_at, punch_type, source, latitude, longitude, ip_address,
+                                  photo_file_id, created_by)
+            VALUES (@company_id, @employee_id, @now, @punch_type, @source, @latitude, @longitude, @ip_address,
+                    @photo_file_id, @actor_user_id);
+            SET @id = SCOPE_IDENTITY();
+        END
     COMMIT;
 
-    EXEC [att].[usp_punch_reprocess] @company_id, @actor_user_id, @employee_id, @now;
+    IF @repeat = 0
+        EXEC [att].[usp_punch_reprocess] @company_id, @actor_user_id, @employee_id, @now;
     EXEC [att].[usp_punch_get] @company_id = @company_id, @id = @id;
 END

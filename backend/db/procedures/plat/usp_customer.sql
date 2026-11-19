@@ -173,6 +173,8 @@ BEGIN
         THROW 50404, N'Organisation not found', 1;
 
     DECLARE @ref NVARCHAR(100) = CONVERT(NVARCHAR(30), @id), @action NVARCHAR(50) = N'organisation_' + @status;
+    -- The Activity Log's Detail names the organisation, so the log says who was suspended or reactivated.
+    DECLARE @audit_detail NVARCHAR(1000) = (SELECT LEFT(name, 1000) FROM [plat].[customer] WHERE id = @id);
     BEGIN TRAN;
         UPDATE [plat].[customer]
         SET status = @status, updated_at = SYSUTCDATETIME(), updated_by = @actor_id
@@ -180,7 +182,7 @@ BEGIN
         IF @@ROWCOUNT = 0
             THROW 50409, N'Someone else changed this organisation. Reload and try again', 1;
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action,
-             @entity_type = N'customer', @entity_ref = @ref;
+             @entity_type = N'customer', @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
     EXEC [plat].[usp_customer_get] @id = @id;
 END

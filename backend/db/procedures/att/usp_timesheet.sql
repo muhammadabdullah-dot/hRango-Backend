@@ -33,7 +33,12 @@ BEGIN
       AND (@tab <> N'subordinates' OR v.employee_id IN (SELECT employee_id FROM [att].[fn_team](@company_id, @actor_user_id)))
       AND (@employee_id IS NULL OR v.employee_id = @employee_id)
       AND (@department_id IS NULL OR e.department_id = @department_id)
-      AND (@employee_status IS NULL OR e.status = @employee_status)
+      -- "Active Staff" is everyone employed (active, probation, notice), "Inactive Staff" everyone switched
+      -- off or gone; any other value is one status.
+      AND (@employee_status IS NULL
+           OR (@employee_status = N'active' AND e.status IN (N'active', N'probation', N'notice'))
+           OR (@employee_status = N'inactive' AND e.status IN (N'inactive', N'left'))
+           OR (@employee_status NOT IN (N'active', N'inactive') AND e.status = @employee_status))
       AND (@pattern IS NULL OR e.code LIKE @pattern OR CONCAT(e.first_name, N' ', e.last_name) LIKE @pattern)
     OPTION (RECOMPILE);
 
@@ -394,7 +399,11 @@ BEGIN
       AND (@tab <> N'subordinates' OR e.id IN (SELECT employee_id FROM [att].[fn_team](@company_id, @actor_user_id)))
       AND (@department_id IS NULL OR e.department_id = @department_id)
       AND (@branch_id IS NULL OR e.branch_id = @branch_id)
-      AND (@employee_status IS NULL OR e.status = @employee_status)
+      -- Active Staff = employed (active, probation, notice); Inactive Staff = switched off or left.
+      AND (@employee_status IS NULL
+           OR (@employee_status = N'active' AND e.status IN (N'active', N'probation', N'notice'))
+           OR (@employee_status = N'inactive' AND e.status IN (N'inactive', N'left'))
+           OR (@employee_status NOT IN (N'active', N'inactive') AND e.status = @employee_status))
       AND (@pattern IS NULL OR e.code LIKE @pattern OR CONCAT(e.first_name, N' ', e.last_name) LIKE @pattern)
     OPTION (RECOMPILE);
 

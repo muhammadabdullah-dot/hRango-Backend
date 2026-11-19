@@ -100,8 +100,10 @@ BEGIN
                 THROW 50409, N'Someone else changed this lead. Reload and try again', 1;
         END
         SET @ref = CONVERT(NVARCHAR(30), @id);
+        -- Detail: which lead (its company) and its stage.
+        DECLARE @audit_detail NVARCHAR(1000) = LEFT(CONCAT(@company_name, N' · ', @stage), 1000);
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action,
-             @entity_type = N'lead', @entity_ref = @ref, @detail = @stage;
+             @entity_type = N'lead', @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
     EXEC [plat].[usp_lead_get] @id = @id;
 END
@@ -204,8 +206,11 @@ BEGIN
                 THROW 50409, N'Someone else changed this ticket. Reload and try again', 1;
         END
         SET @ref = CONVERT(NVARCHAR(30), @id);
+        -- Detail: whose ticket, its subject and its status.
+        DECLARE @audit_detail NVARCHAR(1000) = (SELECT LEFT(CONCAT(c.name, N': ', @subject, N' · ', @status), 1000)
+                                          FROM [plat].[customer] c WHERE c.id = @customer_id);
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action,
-             @entity_type = N'ticket', @entity_ref = @ref, @detail = @status;
+             @entity_type = N'ticket', @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
     EXEC [plat].[usp_ticket_get] @id = @id;
 END

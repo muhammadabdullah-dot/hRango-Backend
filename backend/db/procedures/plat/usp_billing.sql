@@ -177,8 +177,13 @@ BEGIN
                 THROW 50409, N'Someone else changed this subscription. Reload and try again', 1;
         END
         SET @ref = CONVERT(NVARCHAR(30), @id);
+        -- Detail: whose subscription, on which plan, and its status.
+        DECLARE @audit_detail NVARCHAR(1000) = (
+            SELECT LEFT(CONCAT(c.name, N' · ', p.name, N' · ', @status), 1000)
+            FROM [plat].[customer] c LEFT JOIN [plat].[plan] p ON p.id = @plan_id
+            WHERE c.id = @customer_id);
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action,
-             @entity_type = N'subscription', @entity_ref = @ref, @detail = @status;
+             @entity_type = N'subscription', @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
     EXEC [plat].[usp_subscription_get] @id = @id;
 END
@@ -260,8 +265,10 @@ BEGIN
         VALUES (@number, @customer_id, @subscription_id, @issue_date, @due_date, @amount, N'issued', @actor_id);
         SET @id = SCOPE_IDENTITY();
         SET @ref = CONVERT(NVARCHAR(30), @id);
+        DECLARE @audit_detail NVARCHAR(1000) = (SELECT LEFT(CONCAT(@number, N' · ', name), 1000)
+                                          FROM [plat].[customer] WHERE id = @customer_id);
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = N'invoice_issued',
-             @entity_type = N'invoice', @entity_ref = @ref, @detail = @number;
+             @entity_type = N'invoice', @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
     EXEC [plat].[usp_invoice_get] @id = @id;
 END
@@ -290,6 +297,13 @@ BEGIN
         SET @paid_on = CONVERT(DATE, SYSUTCDATETIME());
 
     DECLARE @action NVARCHAR(50) = N'invoice_' + @status;
+    -- Detail: the invoice number and organisation (and the payment reference), so the log says which invoice.
+    DECLARE @audit_detail NVARCHAR(1000) = (
+        SELECT LEFT(CONCAT(i.number, N' · ', c.name,
+                           CASE WHEN @status = N'paid' AND NULLIF(LTRIM(RTRIM(@payment_reference)), N'') IS NOT NULL
+                                THEN N' · ' + LTRIM(RTRIM(@payment_reference)) END), 1000)
+        FROM [plat].[invoice] i JOIN [plat].[customer] c ON c.id = i.customer_id
+        WHERE i.id = @id);
     BEGIN TRAN;
         UPDATE [plat].[invoice]
         SET status = @status, paid_on = CASE WHEN @status = N'paid' THEN @paid_on END,
@@ -298,7 +312,7 @@ BEGIN
         IF @@ROWCOUNT = 0
             THROW 50409, N'Someone else changed this invoice. Reload and try again', 1;
         EXEC [plat].[usp_staff_audit_add] @staff_id = @actor_id, @action = @action,
-             @entity_type = N'invoice', @entity_ref = @ref;
+             @entity_type = N'invoice', @entity_ref = @ref, @detail = @audit_detail;
     COMMIT;
     EXEC [plat].[usp_invoice_get] @id = @id;
 END
