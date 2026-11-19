@@ -46,6 +46,14 @@ and `tests/test_departments.py` its test.
 - Sign-in: `POST /api/auth/login {email, password}` -> `{data: {token, user}}`; `GET /api/auth/me`;
   `POST /api/auth/logout`. Send `Authorization: Bearer <token>`. `X-Company-Id` switches the active
   company to another one the user belongs to.
+- Employee status filters on the Attendance lists (`employeeStatus`: overview, time sheet and their exports) and the
+  Payroll lists (`employmentStatus`: payslips, final settlements; "Add Matching" of a payroll): `active` is everyone
+  employed (active, probation, notice), `inactive` everyone switched off or gone (inactive, left), any other value
+  one status. Scheduling and the employee directory filter one status. (Test Run rows S1.76 / S1.77: "Active Staff"
+  had left out everyone on probation.)
+- "Today" on a dashboard is the company's today (its time zone, `att.fn_company_now`), as on the time sheet and the
+  clock, not UTC's. The attendance figures (`present`, `clockedIn`, `notStarted`, `dayOff`, `rowCount`) count every
+  time sheet row of the day; `rows` lists them earliest arrival first, up to 1000.
 
 ## Permissions (RBAC)
 
@@ -65,13 +73,23 @@ and `tests/test_departments.py` its test.
   Executives see pay (`EXECUTIVE_PAY`), not CNIC, bank or health details.
 - hRango's own staff are not customers: `/api/platform` with their own accounts (`plat`), tokens and roles
   (Super Admin, Admin, Support, Billing); see `../comparison/17-platform.md`. There is no account that reaches
-  every company: a customer's administrator stays inside their company.
+  every company: a customer's administrator stays inside their company. Every staff action in the Activity Log
+  (`plat.staff_audit`) has a `detail` naming the record it changed: the organisation suspended or reactivated, the
+  invoice number and organisation of an invoice issued, paid or voided, whose subscription on which plan, the lead's
+  company, the ticket's organisation and subject, the staff member's name and role.
 - Users get extra grants or denials per company; a denial wins.
 - The directory (`employees.directory.view`) shows a colleague's work details. Personal details (phones, home
   address, date of birth, family) need `employees.personal.view`: everyone holds it for themselves, HR for the
   company. The API blanks those fields and sends `canSeePersonal: false`; an edit by someone without it keeps them.
 - `/auth/me` `role` names the person's real role: Employee, which everyone also holds, only when it is all they hold.
-- Who may decide a request comes from its flow (ACC-13), so every role holds the approval actions.
+- Who may decide a request comes from its flow (ACC-13), so every role holds the approval actions. The approver a
+  flow names sees and decides the request through `/requests/approvals...` whatever their role's permissions for
+  the type (a Department Head on a promotion); `GET /requests/approvals/summary` lists the types they have
+  approvals of (total, waiting), which the web app's menus show.
+- Reading and deciding can be scoped apart. Manpower budgets: Finance reads every department's (`budget_approvals
+  .view`, company) while a department head decides their own (`.approve` / `.reject`, department); each budget row
+  carries `canApprove` / `canReject` for the caller, and deciding one the caller reads but may not decide is 403 with
+  the department named (one they cannot read is 404).
 
 ## Files
 
@@ -94,6 +112,13 @@ and `tests/test_departments.py` its test.
 - Tell people in the inbox with `core.usp_notification_add` (a user) or `core.usp_notification_add_employee`
   (an employee's accounts); from inside another procedure pass `@quiet = 1` (no result set, so never
   `INSERT ... EXEC`). Every notification is also published as the `notification.created` event.
+- A notification's `@link` is a page of the web app, with the record in a search parameter the page reads:
+  requests `req.fn_request_link` (`/requests/<type>?tab=approvals&request=<id>` for an approver, `?request=<id>`
+  for the requester), `/talent-management/update-requests?request=<id>`, `/my-profile?tab=documents`,
+  `/performance/reviews?review=<id>`, `/recruitment/offers?view=<id>` ... `tests/test_notification_links.py` lists
+  every link shape the procedures write and fails on one the web app has no page for; keep it in line with the
+  frontend's `src/features/inbox/notification-links.test.ts`. Engagement and Training links name records the web
+  app has no pages for yet (its inbox does not offer to open them). Migration 0009 rewrote the links sent before.
 - Publish what happened, in the same transaction as the change:
   `EXEC core.usp_event_publish @company_id, @event_type, @entity_type, @entity_id, @payload` (JSON, camelCase,
   ids as strings). Event types start with the module key: `requests.approved`, `recruitment.candidate_hired`.
@@ -102,9 +127,12 @@ and `tests/test_departments.py` its test.
   Deliveries are signed (`X-HRango-Signature: sha256=HMAC(secret, "<timestamp>.<body>")`) and retried with
   back-off; see `app/core/events.py`. The API delivers them in a background thread (`WEBHOOK_WORKER`), or run
   `scripts/webhooks.py` as a service. The same loop sends due project reminders to the inbox once a minute.
-- Mail is not built (`MAIL_ENABLED=false`, `app/core/mail.py`): routes that send mail record it and report the
-  status `disabled`. Payroll keeps what it would send in `pay.mail_outbox`. A mail gateway can also subscribe to
-  `notification.created`.
+- Mail (`app/core/mail.py`): callers `queue` a message in `core.mail_message` and the same worker loop sends what
+  is due (SMTP, or `.eml` files with `MAIL_BACKEND=file`), retrying failures. With `MAIL_ENABLED=false` a message is
+  recorded `disabled` and never sent. Payroll's close e-mail and salary revision letter go through it: each person
+  gets their own message, `pay.mail_outbox` keeps one row per person linked to it (`mail_message_id`), and
+  `mail.RESULT_OWNERS` copies each send's result back (`pay.usp_mail_outbox_result`: queued -> sent / failed, and
+  the run's close e-mail state). A mail gateway can also subscribe to `notification.created`.
 
 ## AI and routes without sign-in
 
@@ -113,12 +141,43 @@ and `tests/test_departments.py` its test.
   their manual editors.
 - `/api/public/...` works without a token (`routers/public.py`: shared project links). Each route checks its
   own token and limits; nothing else goes there.
+- Shared project links (the web app's `/shared/{token}` page): `GET /api/public/shares/{token}` answers the page's
+  tasks and, for a shared task, the task's own details (`task`) in the same access; `.../tasks/{taskId}` opens one
+  when the link allows it (403 `SHARE_TASKS_CLOSED`). Only the properties the link shows are filled; subtasks only
+  with "subtasks" (`pm.fn_share_tasks`); a link saved without properties shows everything. A refused link is 404
+  `SHARE_NOT_FOUND` or 410 `SHARE_EXPIRED` / `SHARE_NOT_STARTED` / `SHARE_EXHAUSTED`; every page or task opened
+  counts one access.
+
+## Project management rules worth knowing
+
+- Workspace roles: `POST /projects/workspaces/{id}/members` adds people with a `memberRole` (and sets the role of
+  ones already there); `PATCH .../members/{employeeId}` changes a member's role and is 404 for someone who is not a
+  member. Workspace admins and HR manage members; only a workspace admin gives or takes the workspace admin role;
+  the owner stays a workspace admin (409).
+- Mentions: a task comment mentions only people who can see the task (`pm.fn_task_viewers`, the per-employee twin
+  of `pm.fn_task_access`: keep the two in step); anyone else is 422 `MENTION_NOT_ALLOWED`. `GET /projects/people
+  ?taskId=` lists who can be mentioned.
+- A task's checklist changes (add, tick, untick, rename, delete) are in its History (`checklist_*` actions).
+
+## HR rules worth knowing
+
+- Benefit elections keep the employee's note (`remarks`) and HR's remarks on the decision (`decisionRemarks`,
+  migration 0041) apart; rejecting needs a reason (422 on `remarks`).
+- Switching an employee off keeps the status they had (`hr.employee.status_before_inactive`, migration 0040);
+  Reactivate gives it back (probation, notice), and for a record switched off before that, probation while its
+  probation has not ended and nobody confirmed them, else active.
+- A required Yes/No (tick box) field of the off-boarding checklist holds up the end of employment until it is ticked
+  (`sep.fn_end_of_employment_waiting`): an unticked box is saved as `false`, which is not an answer.
 
 ## Procedure conventions
 
 - Name `<schema>.usp_<table or screen>_<verb>`: `_list`, `_get`, `_save` (add when `@id` is NULL, else
   edit), `_delete`, and real verbs for actions (`_approve`, `_process`, `_close`). One procedure per
   file, or a few closely related ones in one file separated by `GO`.
+- A write a double press could repeat takes an application lock on what it guards, inside its transaction, around
+  the check and the insert (`sp_getapplock N'att.punch.<employee id>'`): two presses at once cannot both insert.
+  Clock In / Out pressed again while the person's last punch is the same type and under five minutes old returns
+  that punch (no second one); a manual punch identical to one in the log is refused (409 `PUNCH_DUPLICATE`).
 - First parameters `@company_id`, then `@actor_user_id` on anything that writes or needs scope. Every
   query filters on `company_id`; another company's row is "not found".
 - `SET NOCOUNT ON; SET XACT_ABORT ON;` Validate first, then `BEGIN TRAN ... COMMIT` around the writes.
@@ -129,6 +188,11 @@ and `tests/test_departments.py` its test.
 - Edits and deletes take `@row_version BINARY(8)` and THROW 50409 when it no longer matches.
 - Lists return two result sets: the total, then the page (`OFFSET/FETCH`, `OPTION (RECOMPILE)`), read
   with `db.call_sets`. Search patterns escape `[`, `%`, `_`.
+- A page that reads wide rows (a row function with long text or `FOR JSON` columns: `pm.fn_task_rows`,
+  `req.fn_request_rows` with its details) also takes `MAX_GRANT_PERCENT = 1`. Those plans ask for hundreds of MB of
+  sort memory for one page, and on a server short of memory a query waits for its grant until it times out: in the
+  Test Run a 41-row task list took 222 s, 0.2 s of it work. Capped, it takes the few MB it needs. To find others,
+  read `sys.query_store_plan` (Query Store is on by default from SQL Server 2022) for a large `SerialDesiredMemory`.
 - Writes add rows to `core.audit_log` (one per changed field) where the screen has a History view.
 - Child rows (lines, slabs, rules) are saved with their parent in one procedure: pass them as JSON
   (`@lines NVARCHAR(MAX)`, read with `OPENJSON`).
@@ -160,7 +224,15 @@ and add numbered migrations.
                                                        password from HRANGO_PLATFORM_PASSWORD or asked)
 .venv\Scripts\python.exe -m scripts.seed --export hrango_install.sql
                                                        everything as one script for sqlcmd / SSMS
+.venv\Scripts\python.exe -m scripts.seed --enable-row-versioning
+                                                       switch READ_COMMITTED_SNAPSHOT on for an existing database
+                                                       (briefly ends every connection: run it in a quiet moment)
 ```
+
+Row versioning (READ_COMMITTED_SNAPSHOT) lets pages read the last committed rows instead of waiting behind a
+long write such as a payroll run or an attendance process. `--create` and `--reset` switch it on for the new
+database; on an existing one every seeder run warns until `--enable-row-versioning` has been run. Production
+databases need it: without it the Test Run of 18 Nov 2026 saw 80-second page loads and deadlocks under load.
 
 Each run: migrations, procedures, seeds, the permission catalogue, then default roles for every company.
 
